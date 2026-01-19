@@ -2,46 +2,54 @@
 <html lang="pt-br">
 <head>
     <meta charset="UTF-8">
-    <title>Terminal IA Quant</title>
-    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+    <title>IA QUANT TERMINAL</title>
     <style>
-        body { background: #0b0e11; color: white; font-family: sans-serif; }
-        .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; padding: 20px; }
-        .card { background: #1e2329; padding: 20px; border-radius: 8px; border: 1px solid #30363d; }
-        .price { font-size: 24px; color: #00ffcc; font-weight: bold; }
-        #chart { height: 400px; width: 100%; margin-top: 20px; }
+        body { background: #0b0e11; color: #eaecef; font-family: 'Segoe UI', sans-serif; margin: 0; }
+        .header { display: flex; gap: 30px; padding: 20px; background: #181a20; border-bottom: 1px solid #2b2f36; }
+        .metric-box { display: flex; flex-direction: column; }
+        .label { color: #848e9c; font-size: 12px; }
+        .value { color: #00ffcc; font-size: 20px; font-weight: bold; }
+        #terminal-log { background: #000; height: 200px; padding: 15px; overflow-y: scroll; font-family: monospace; color: #00ff00; }
     </style>
 </head>
 <body>
-    <div class="grid">
-        <div class="card">
-            <div>PREÇO BTC</div>
-            <div id="btc-price" class="price">Carregando...</div>
+    <div class="header">
+        <div class="metric-box">
+            <span class="label">PREÇO BTC/USDT</span>
+            <span id="price" class="value">0.00</span>
         </div>
-        <div class="card">
-            <div>STATUS IA</div>
-            <div id="bot-status" style="color: #f0b90b;">ANALISANDO</div>
-        </div>
-        <div class="card">
-            <div>PNL HOJE</div>
-            <div id="pnl" style="color: #00ffcc;">+ $0.00</div>
+        <div class="metric-box">
+            <span class="label">SINAL IA</span>
+            <span id="signal" class="value" style="color: #f0b90b;">ANALISANDO...</span>
         </div>
     </div>
 
-    <div id="chart"></div>
+    <div id="tradingview_widget" style="height: 500px;"></div>
+
+    <div id="terminal-log">
+        > Iniciando motor de validação...<br>
+    </div>
 
     <script>
-        // Função para atualizar os números sem recarregar a página
-        async function updateData() {
+        async function refreshData() {
             try {
-                const response = await fetch('http://127.0.0.1:8000/api/data');
-                const data = await response.json();
-                document.getElementById('btc-price').innerText = `$ ${data.price.toLocaleString()}`;
-            } catch (e) { console.log("Erro ao buscar dados"); }
+                const res = await fetch('http://127.0.0.1:8000/api/market');
+                const data = await res.json();
+                
+                // Atualiza apenas os textos, sem recarregar a página
+                document.getElementById('price').innerText = `$ ${data.price}`;
+                document.getElementById('signal').innerText = data.ai_signal;
+                
+                const log = document.getElementById('terminal-log');
+                log.innerHTML += `[${new Date().toLocaleTimeString()}] Preço atualizado: ${data.price}<br>`;
+                log.scrollTop = log.scrollHeight;
+            } catch (err) {
+                console.error("Erro ao conectar com o motor Python");
+            }
         }
 
-        // Atualiza a cada 2 segundos
-        setInterval(updateData, 2000);
+        // Roda a cada 1 segundo (Tempo Real de verdade)
+        setInterval(refreshData, 1000);
     </script>
 </body>
 </html>
