@@ -1,141 +1,253 @@
 import streamlit as st
 import ccxt
 import pandas as pd
-import pandas_ta as ta  # Biblioteca para análise técnica avançada
+import time
 from datetime import datetime
 
-# --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="IA-QUANT TERMINAL PRO", layout="wide", initial_sidebar_state="collapsed")
+# --- 1. CONFIGURAÇÃO "ELITE" (VISUAL CYBERPUNK) ---
+st.set_page_config(page_title="QUANT-OS ELITE", layout="wide", initial_sidebar_state="collapsed")
 
-# Estilo CSS para Terminal Profissional
+# CSS Avançado: Fundo gradiente, Cartões de Vidro (Glassmorphism), Fontes Mono
 st.markdown("""
     <style>
-    .block-container { padding-top: 1rem; background-color: #0b0e11; }
-    .metric-card { 
-        background-color: #181a20; padding: 20px; border-radius: 10px; 
-        border: 1px solid #2b2f36; text-align: center;
+    /* Fundo Deep Space */
+    .stApp {
+        background: radial-gradient(circle at 10% 20%, #0b0e11 0%, #000000 90%);
+        color: #e0e0e0;
     }
-    .value { font-size: 1.8rem; font-weight: bold; font-family: 'Courier New', monospace; color: #00ffcc; }
-    .label { color: #848e9c; font-size: 0.8rem; letter-spacing: 1px; }
-    </style>
-    """, unsafe_allow_html=True)
+    
+    /* Remover barras padrão do Streamlit */
+    header {visibility: hidden;}
+    footer {visibility: hidden;}
+    
+    /* Cartões "Glassmorphism" (Efeito de Vidro) */
+    .glass-card {
+        background: rgba(255, 255, 255, 0.03);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 15px;
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        text-align: center;
+        transition: transform 0.2s;
+    }
+    .glass-card:hover {
+        border: 1px solid rgba(0, 240, 255, 0.3);
+        box-shadow: 0 0 15px rgba(0, 240, 255, 0.1);
+    }
 
-# --- FUNÇÃO 1: CONEXÃO COM A EXCHANGE ---
+    /* Tipografia Elite */
+    .label {
+        font-family: 'Segoe UI', sans-serif;
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        color: #8b949e;
+        margin-bottom: 5px;
+    }
+    .value {
+        font-family: 'Courier New', monospace;
+        font-size: 1.8rem;
+        font-weight: 700;
+        color: #fff;
+        text-shadow: 0 0 10px rgba(255, 255, 255, 0.1);
+    }
+    .neon-green { color: #00ff9d; text-shadow: 0 0 10px rgba(0, 255, 157, 0.4); }
+    .neon-red { color: #ff3366; text-shadow: 0 0 10px rgba(255, 51, 102, 0.4); }
+    .neon-blue { color: #00f3ff; text-shadow: 0 0 10px rgba(0, 243, 255, 0.4); }
+    
+    /* Ajuste de Gráfico */
+    iframe { border-radius: 12px !important; border: 1px solid #2d2d2d; }
+    </style>
+""", unsafe_allow_html=True)
+
+# --- 2. CONEXÃO BANCÁRIA (API) ---
 @st.cache_resource
-def conectar_mexc():
-    """Estabelece conexão com o mercado de Futuros da MEXC."""
+def connect_bank():
     return ccxt.mexc({
-        'apiKey': st.secrets["API_KEY"],
-        'secret': st.secrets["SECRET_KEY"],
-        'options': {'defaultType': 'swap'}, # Define mercado de Futuros Perpétuos
+        'apiKey': st.secrets.get("API_KEY", ""),
+        'secret': st.secrets.get("SECRET_KEY", ""),
+        'options': {'defaultType': 'swap'}, # CRUCIAL: MODO FUTUROS
         'enableRateLimit': True
     })
 
-mexc = conectar_mexc()
+mexc = connect_bank()
 
-# --- FUNÇÃO 2: MOTOR DE INTELIGÊNCIA (IA QUANT) ---
-def processar_ia_quant(symbol):
-    """Analisa tendências usando Médias Móveis e RSI."""
+# --- 3. INTELIGÊNCIA MATEMÁTICA (NATIVA) ---
+def get_market_intelligence(symbol):
     try:
-        # Busca velas de 1 minuto
-        ohlcv = mexc.fetch_ohlcv(symbol, timeframe='1m', limit=100)
+        # Puxa dados brutos
+        ohlcv = mexc.fetch_ohlcv(symbol, timeframe='1m', limit=60)
         df = pd.DataFrame(ohlcv, columns=['ts', 'open', 'high', 'low', 'close', 'vol'])
         
-        # Cálculo de Indicadores Técnicos
-        df['EMA_FAST'] = ta.ema(df['close'], length=9)
-        df['EMA_SLOW'] = ta.ema(df['close'], length=21)
-        df['RSI'] = ta.rsi(df['close'], length=14)
+        # Matemática Financeira (Sem bibliotecas externas)
+        df['ema_fast'] = df['close'].ewm(span=9).mean()
+        df['ema_slow'] = df['close'].ewm(span=21).mean()
         
-        last_row = df.iloc[-1]
-        prev_row = df.iloc[-2]
+        delta = df['close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+        df['rsi'] = 100 - (100 / (1 + (gain / loss)))
         
-        # Lógica de Decisão (Crossover + RSI)
-        # Compra: EMA Rápida cruza acima da Lenta + RSI abaixo de 40 (sobrevendido)
-        if last_row['EMA_FAST'] > last_row['EMA_SLOW'] and prev_row['EMA_FAST'] <= prev_row['EMA_SLOW'] and last_row['RSI'] < 50:
-            return "COMPRA (LONG)", "#00ffcc", "buy"
+        last = df.iloc[-1]
+        prev = df.iloc[-2]
         
-        # Venda: EMA Rápida cruza abaixo da Lenta + RSI acima de 60 (sobrecomprado)
-        elif last_row['EMA_FAST'] < last_row['EMA_SLOW'] and prev_row['EMA_FAST'] >= prev_row['EMA_SLOW'] and last_row['RSI'] > 50:
-            return "VENDA (SHORT)", "#ff4d4d", "sell"
+        # Algoritmo de Decisão
+        status = "NEUTRO"
+        cor = "#8b949e"
+        acao = None
         
-        return "AGUARDANDO SINAL", "#848e9c", None
-    except Exception as e:
-        return f"ERRO IA: {str(e)}", "#848e9c", None
-
-# --- FUNÇÃO 3: EXECUTOR DE ORDENS ---
-def executar_trade_real(acao, par, alavancagem, volume_usd):
-    """Envia ordens a mercado para a corretora."""
-    try:
-        symbol_futures = f"{par.split('/')[0]}/USDT:USDT"
-        
-        # 1. Ajusta alavancagem
-        mexc.set_leverage(alavancagem, symbol_futures)
-        
-        # 2. Busca preço atual para calcular quantidade
-        ticker = mexc.fetch_ticker(symbol_futures)
-        price = ticker['last']
-        
-        # 3. Calcula quantidade (Margem * Alavancagem / Preço)
-        qty = (volume_usd * alavancagem) / price
-        
-        if acao == 'buy':
-            order = mexc.create_market_buy_order(symbol_futures, qty)
-        else:
-            order = mexc.create_market_sell_order(symbol_futures, qty)
+        # Lógica Sniper: Cruzamento + Confirmação RSI
+        if last['ema_fast'] > last['ema_slow'] and prev['ema_fast'] <= prev['ema_slow'] and last['rsi'] < 60:
+            status = "COMPRA AGRESSIVA"
+            cor = "neon-green"
+            acao = "buy"
+        elif last['ema_fast'] < last['ema_slow'] and prev['ema_fast'] >= prev['ema_slow'] and last['rsi'] > 40:
+            status = "VENDA FORTE"
+            cor = "neon-red"
+            acao = "sell"
             
-        return f"✅ SUCESSO: {acao.upper()} {qty:.4f} @ {price}"
+        return status, cor, acao, last['close'], last['rsi']
+    except:
+        return "SYNC...", "#fff", None, 0.0, 50.0
+
+# --- 4. GESTÃO DE CARTEIRA (NOVA FUNÇÃO) ---
+def get_wallet_status():
+    try:
+        # Pega saldo ESPECÍFICO de Futuros (Swap)
+        balance = mexc.fetch_balance({'type': 'swap'})
+        usdt_total = balance['USDT']['total']
+        usdt_free = balance['USDT']['free']
+        usdt_used = balance['USDT']['used']
+        return usdt_total, usdt_free, usdt_used
     except Exception as e:
-        return f"❌ FALHA: {str(e)}"
+        return 0.0, 0.0, 0.0
 
-# --- INTERFACE DO USUÁRIO (FRONTEND) ---
+# --- 5. EXECUÇÃO DE ALTA FREQUÊNCIA ---
+def execute_order(side, pair, lev, amount_usd):
+    try:
+        sym = f"{pair.split('/')[0]}/USDT:USDT"
+        mexc.set_leverage(lev, sym)
+        ticker = mexc.fetch_ticker(sym)
+        price = ticker['last']
+        qty = (amount_usd * lev) / price # Qty em Moeda
+        
+        if side == 'buy':
+            mexc.create_market_buy_order(sym, qty)
+        else:
+            mexc.create_market_sell_order(sym, qty)
+        return f"ORDEM EXECUTADA: {side.upper()} | ${amount_usd} @ {price}"
+    except Exception as e:
+        return f"ERRO EXECUÇÃO: {e}"
+
+# --- 6. INTERFACE ELITE (LAYOUT) ---
+
+# Sidebar Minimalista
 with st.sidebar:
-    st.header("🎮 CONTROLE DO ROBÔ")
-    par_ativo = st.selectbox("PAR DE FUTUROS", ["BTC/USDT", "ETH/USDT"])
-    alavancagem_sel = st.slider("ALAVANCAGEM", 1, 50, 10)
-    capital_por_trade = st.number_input("MARGEM POR TRADE (USD)", value=20)
+    st.markdown("## ⚙️ SYSTEM CONTROL")
+    active_pair = st.selectbox("ASSET", ["BTC/USDT", "ETH/USDT", "SOL/USDT"])
+    leverage = st.slider("LEVERAGE (x)", 1, 100, 20)
+    risk_usd = st.number_input("MARGIN PER TRADE ($)", value=100)
     st.divider()
-    modo_real = st.toggle("ATIVAR EXECUÇÃO REAL", value=False)
-    st.info("O robô usa cruzamento de EMA 9/21 + RSI para entradas.")
+    system_arm = st.toggle("⚠️ ARM SYSTEM (REAL MONEY)", value=False)
 
-st.title("⚡ GEN-QUANT AI PRO TERMINAL")
+st.title("QUANT-OS // ELITE TERMINAL")
 
-# Widget TradingView Estático
+# Container do Gráfico (Fixo)
 st.components.v1.html(f"""
-    <div id="tv-chart" style="height:400px;"></div>
+    <div id="tv_chart" style="height:480px; border-radius:12px; overflow:hidden;"></div>
     <script src="https://s3.tradingview.com/tv.js"></script>
-    <script>new TradingView.widget({{"autosize":true,"symbol":"MEXC:{par_ativo.replace('/','')}.P","interval":"1","theme":"dark","container_id":"tv-chart"}});</script>
-""", height=400)
+    <script>
+    new TradingView.widget({{
+        "autosize": true,
+        "symbol": "MEXC:{active_pair.replace('/','')}.P",
+        "interval": "1",
+        "timezone": "Etc/UTC",
+        "theme": "dark",
+        "style": "1",
+        "locale": "en",
+        "toolbar_bg": "#000000",
+        "enable_publishing": false,
+        "hide_top_toolbar": false,
+        "container_id": "tv_chart"
+    }});
+    </script>
+""", height=480)
 
-# --- FRAGMENTO DE ALTA FREQUÊNCIA (DASHBOARD DINÂMICO) ---
-@st.fragment(run_every=3)
-def atualizar_dashboard(par):
-    symbol_formatted = f"{par.split('/')[0]}/USDT:USDT"
-    sinal_txt, cor_sinal, acao_trade = processar_ia_quant(symbol_formatted)
+# --- 7. FRAGMENTO "CORE" (ATUALIZAÇÃO TOTAL) ---
+@st.fragment(run_every=2)
+def live_core(symbol):
+    sym_fmt = f"{symbol.split('/')[0]}/USDT:USDT"
     
-    # Busca preço em tempo real
-    ticker = mexc.fetch_ticker(symbol_formatted)
+    # 1. Puxa Saldo em Tempo Real
+    total, free, used = get_wallet_status()
     
-    # Linha de métricas
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.markdown(f"<div class='metric-card'><div class='label'>PREÇO ATUAL</div><div class='value'>$ {ticker['last']:,.2f}</div></div>", unsafe_allow_html=True)
-    with col2:
-        st.markdown(f"<div class='metric-card'><div class='label'>IA SIGNAL</div><div class='value' style='color:{cor_sinal}'>{sinal_txt}</div></div>", unsafe_allow_html=True)
-    with col3:
-        st.markdown(f"<div class='metric-card'><div class='label'>MODO</div><div class='value' style='color:#f0b90b'>{'AUTOMÁTICO' if modo_real else 'SIMULAÇÃO'}</div></div>", unsafe_allow_html=True)
+    # 2. Puxa Inteligência de Mercado
+    signal, color_class, action, price, rsi_val = get_market_intelligence(sym_fmt)
+    
+    # --- LINHA 1: CARTEIRA (WALLET) ---
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown(f"""
+        <div class='glass-card'>
+            <div class='label'>EQUITY TOTAL (USDT)</div>
+            <div class='value neon-blue'>$ {total:,.2f}</div>
+        </div>""", unsafe_allow_html=True)
+    with c2:
+        st.markdown(f"""
+        <div class='glass-card'>
+            <div class='label'>DISPONÍVEL</div>
+            <div class='value'>$ {free:,.2f}</div>
+        </div>""", unsafe_allow_html=True)
+    with c3:
+        st.markdown(f"""
+        <div class='glass-card'>
+            <div class='label'>EM ORDEM (MARGEM)</div>
+            <div class='value' style='color:#ffcc00;'>$ {used:,.2f}</div>
+        </div>""", unsafe_allow_html=True)
 
-    # Lógica de Execução
-    if modo_real and acao_trade:
-        if 'last_trade_time' not in st.session_state or (time.time() - st.session_state.last_trade_time > 60):
-            res_log = executar_trade_real(acao_trade, par, alavancagem_sel, capital_por_trade)
-            st.session_state.log_historico = res_log
-            st.session_state.last_trade_time = time.time()
-            st.toast(res_log)
+    # --- LINHA 2: MERCADO (MARKET DATA) ---
+    k1, k2, k3 = st.columns(3)
+    with k1:
+        st.markdown(f"""
+        <div class='glass-card'>
+            <div class='label'>PREÇO ATUAL</div>
+            <div class='value'>$ {price:,.2f}</div>
+        </div>""", unsafe_allow_html=True)
+    with k2:
+        st.markdown(f"""
+        <div class='glass-card'>
+            <div class='label'>INTELIGÊNCIA ARTIFICIAL</div>
+            <div class='value {color_class}'>{signal}</div>
+        </div>""", unsafe_allow_html=True)
+    with k3:
+        st.markdown(f"""
+        <div class='glass-card'>
+            <div class='label'>RSI INDEX</div>
+            <div class='value'>{rsi_val:.1f}</div>
+        </div>""", unsafe_allow_html=True)
 
-# Inicia Monitoramento
-if 'log_historico' not in st.session_state: st.session_state.log_historico = "Aguardando sinal..."
-atualizar_dashboard(par_ativo)
+    # --- LÓGICA DE TIRO (EXECUÇÃO) ---
+    if system_arm and action:
+        # Check simples para não floodar ordens (1 min cooldown)
+        if 'last_shot' not in st.session_state or (time.time() - st.session_state.last_shot > 60):
+            # Validação de Saldo
+            if free >= risk_usd:
+                log = execute_order(action, symbol, leverage, risk_usd)
+                st.toast(log, icon="⚡")
+                st.session_state.terminal_log = f"[{datetime.now().strftime('%H:%M:%S')}] {log}"
+                st.session_state.last_shot = time.time()
+            else:
+                st.toast("SALDO INSUFICIENTE PARA OPERAR", icon="❌")
 
-st.divider()
-st.subheader("📝 REGISTRO DE OPERAÇÕES")
-st.code(st.session_state.log_historico)
+# Inicialização de Estado
+if 'terminal_log' not in st.session_state: st.session_state.terminal_log = "SYSTEM READY..."
+
+# Inicia o Core
+live_core(active_pair)
+
+# Rodapé: Terminal Log
+st.markdown("---")
+st.markdown(f"<div style='color:#444; font-family:monospace;'>TERMINAL_LOG: > {st.session_state.terminal_log}</div>", unsafe_allow_html=True)
