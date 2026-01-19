@@ -3,83 +3,140 @@ import ccxt
 import time
 from datetime import datetime
 
-# Configuração de Layout
-st.set_page_config(page_title="IA-QUANT VALIDATOR", layout="wide", initial_sidebar_state="collapsed")
+# --- CONFIGURAÇÃO DE LAYOUT PROFISSIONAL ---
+st.set_page_config(
+    page_title="IA-QUANT TERMINAL V15",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
 
-# CSS para estabilizar o visual dark
+# Estabilização visual via CSS (Cores da MEXC)
 st.markdown("""
     <style>
     .block-container { padding-top: 1rem; background-color: #0b0e11; }
     .metric-card { 
-        background-color: #181a20; padding: 15px; border-radius: 8px; 
-        border: 1px solid #2b2f36; text-align: center;
+        background-color: #181a20; 
+        padding: 20px; 
+        border-radius: 10px; 
+        border: 1px solid #2b2f36;
+        text-align: center;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
+    .label { color: #848e9c; font-size: 0.9rem; margin-bottom: 5px; }
+    .value { font-size: 1.8rem; font-weight: bold; font-family: 'Courier New', monospace; }
+    iframe { border-radius: 8px !important; }
     </style>
     """, unsafe_allow_html=True)
 
+# --- CONEXÃO BLINDADA COM A API ---
 @st.cache_resource
-def get_api():
-    # Usamos apenas o necessário para o Ticker público primeiro
+def get_mexc_api():
     return ccxt.mexc({
         'apiKey': st.secrets.get("API_KEY", ""),
         'secret': st.secrets.get("SECRET_KEY", ""),
         'options': {'defaultType': 'swap'},
-        'enableRateLimit': True
+        'enableRateLimit': True,
+        'adjustForTimeDifference': True
     })
 
-mexc = get_api()
+mexc = get_mexc_api()
 
-# --- TÍTULO ---
-st.title("⚡ GEN-QUANT TERMINAL V14")
+# --- INTERFACE PRINCIPAL ---
+st.title("⚡ GEN-QUANT TERMINAL PRO")
 
-# --- GRÁFICO TRADINGVIEW (ESTÁTICO) ---
-# O Widget é a melhor forma de validar sem consumir sua banda de API
-st.components.v1.html("""
-    <div id="tv-chart" style="height:480px;"></div>
+# COLUNA DE CONFIGURAÇÃO (FIXA)
+with st.sidebar:
+    st.header("CONTROLE")
+    pair = st.selectbox("ATIVO", ["BTC/USDT", "ETH/USDT"], index=0)
+    leverage = st.slider("ALAVANCAGEM", 1, 50, 10)
+    bot_active = st.toggle("EXECUTOR ATIVO", value=False)
+    st.divider()
+    st.info("Modo de Validação: O gráfico abaixo é estático para evitar recarregamento da página.")
+
+# --- GRÁFICO TRADINGVIEW (NUNCA RECARREGA) ---
+# O widget oficial da MEXC/TradingView é injetado uma única vez
+st.components.v1.html(f"""
+    <div id="tradingview_chart" style="height:500px;"></div>
     <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
     <script type="text/javascript">
-    new TradingView.widget({
-      "autosize": true, "symbol": "MEXC:BTCUSDT.P", "interval": "1",
-      "theme": "dark", "style": "1", "locale": "br", "container_id": "tv-chart"
-    });
+    new TradingView.widget({{
+      "autosize": true,
+      "symbol": "MEXC:{pair.replace('/', '')}.P",
+      "interval": "1",
+      "timezone": "Etc/UTC",
+      "theme": "dark",
+      "style": "1",
+      "locale": "br",
+      "toolbar_bg": "#f1f3f6",
+      "enable_publishing": false,
+      "hide_side_toolbar": false,
+      "allow_symbol_change": true,
+      "container_id": "tradingview_chart"
+    }});
     </script>
-""", height=480)
+""", height=500)
 
-# --- FRAGMENTO DE DADOS (CORRIGIDO) ---
-@st.fragment(run_every=3) # Aumentamos para 3s para evitar bloqueio de IP (Rate Limit)
-def live_dashboard():
+# --- FRAGMENTO DE DADOS EM TEMPO REAL ---
+# Esta função atualiza apenas os números, sem dar refresh no gráfico acima
+@st.fragment(run_every=2)
+def update_live_metrics(symbol_name):
     try:
-        # CORREÇÃO DO SÍMBOLO: 
-        # Para Futuros/Swap na MEXC via CCXT, o formato mais seguro é "BTC/USDT:USDT"
-        # mas se falhar, tentamos o ID direto "BTC_USDT"
-        symbol = "BTC/USDT:USDT"
+        # Formato de símbolo corrigido para evitar ExchangeError
+        formatted_symbol = f"{symbol_name.split('/')[0]}/USDT:USDT"
         
-        ticker = mexc.fetch_ticker(symbol)
+        ticker = mexc.fetch_ticker(formatted_symbol)
         price = ticker['last']
         high = ticker['high']
         low = ticker['low']
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.markdown(f"<div class='metric-card'><p style='color:#848e9c;margin:0;'>PREÇO</p><h2 style='color:#00ffcc;margin:0;'>$ {price:,.2f}</h2></div>", unsafe_allow_html=True)
+        change = ticker['percentage']
+
+        # Layout de métricas estilo MEXC
+        c1, c2, c3, c4 = st.columns(4)
+
+        with c1:
+            st.markdown(f"""<div class='metric-card'>
+                <div class='label'>PREÇO ATUAL</div>
+                <div class='value' style='color:#00ffcc;'>$ {price:,.2f}</div>
+            </div>""", unsafe_allow_html=True)
+
+        with c2:
+            st.markdown(f"""<div class='metric-card'>
+                <div class='label'>VARIAÇÃO 24H</div>
+                <div class='value' style='color:{"#00ffcc" if change >= 0 else "#ff4d4d"};'>{change}%</div>
+            </div>""", unsafe_allow_html=True)
+
+        with c3:
+            # Lógica de Sinais (Exemplo de Validação)
+            rsi_simulado = 35.4 # Aqui você integraria sua lógica de indicadores
+            status = "AGUARDANDO"
+            color = "#848e9c"
             
-        with col2:
-            st.markdown(f"<div class='metric-card'><p style='color:#848e9c;margin:0;'>MÁXIMA 24H</p><h2 style='color:#fff;margin:0;'>$ {high:,.1f}</h2></div>", unsafe_allow_html=True)
-            
-        with col3:
-            # Lógica de validação: Se preço cair 1% da máxima, sinaliza atenção
-            status = "NEUTRO"
-            if price <= low * 1.005: status = "COMPRA"
-            elif price >= high * 0.995: status = "VENDA"
-            
-            st.markdown(f"<div class='metric-card'><p style='color:#848e9c;margin:0;'>SINAL IA</p><h2 style='color:#f0b90b;margin:0;'>{status}</h2></div>", unsafe_allow_html=True)
-            
-        st.caption(f"Conexão estável • {datetime.now().strftime('%H:%M:%S')}")
+            if price <= low * 1.002:
+                status = "COMPRA"
+                color = "#00ffcc"
+            elif price >= high * 0.998:
+                status = "VENDA"
+                color = "#ff4d4d"
+
+            st.markdown(f"""<div class='metric-card'>
+                <div class='label'>SINAL IA</div>
+                <div class='value' style='color:{color};'>{status}</div>
+            </div>""", unsafe_allow_html=True)
+
+        with c4:
+             st.markdown(f"""<div class='metric-card'>
+                <div class='label'>STATUS API</div>
+                <div class='value' style='color:#f0b90b; font-size: 1.2rem;'>ESTÁVEL</div>
+                <div style='font-size:10px; color:#848e9c;'>{datetime.now().strftime('%H:%M:%S')}</div>
+            </div>""", unsafe_allow_html=True)
 
     except Exception as e:
-        # Se der erro, ele mostra uma mensagem discreta e tenta de novo no próximo ciclo
-        st.caption(f"Aguardando resposta da MEXC...")
+        st.caption(f"Sincronizando dados com MEXC... (Verifique se o par {symbol_name} é válido)")
 
-# Inicia o monitoramento
-live_dashboard()
+# Executa o fragmento de tempo real
+update_live_metrics(pair)
+
+# --- RODAPÉ DE POSIÇÕES (OPCIONAL) ---
+st.divider()
+st.subheader("📋 Monitor de Execução")
+st.caption("As ordens reais só serão enviadas se o 'Executor Ativo' estiver ligado e as chaves API configuradas.")
