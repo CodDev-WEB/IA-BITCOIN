@@ -4,100 +4,76 @@ import pandas as pd
 import time
 from datetime import datetime
 
-# --- 1. CONFIGURAÇÃO DE INTERFACE ULTRA-PREMIUM ---
-st.set_page_config(
-    page_title="QUANT-OS V27 // THE VAULT", 
-    layout="wide", 
-    initial_sidebar_state="collapsed"
-)
+# --- 1. CONFIGURAÇÃO DE INTERFACE CYBER-SCALPER ---
+st.set_page_config(page_title="TURBO SCALPER V28", layout="wide", initial_sidebar_state="collapsed")
 
-# Estilização CSS: Glassmorphism, Neon e Deep Space
 st.markdown("""
     <style>
-    .stApp { background: #050505; color: #e0e0e0; }
+    .stApp { background: #020202; color: #ffffff; }
     header {visibility: hidden;}
-    
-    .glass-card {
-        background: rgba(20, 20, 25, 0.8);
-        border: 1px solid rgba(0, 243, 255, 0.2);
-        border-radius: 15px;
-        padding: 20px;
+    .scalp-card {
+        background: rgba(10, 10, 15, 0.9);
+        border: 1px solid #333;
+        border-radius: 10px;
+        padding: 15px;
         text-align: center;
-        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.8);
-        margin-bottom: 10px;
+        box-shadow: 0 4px 15px rgba(0,255,157,0.1);
     }
-    
-    .label { font-size: 0.7rem; letter-spacing: 2px; color: #666; text-transform: uppercase; margin-bottom: 8px; }
-    .value { font-size: 1.6rem; font-family: 'Courier New', monospace; font-weight: bold; color: #fff; }
-    
-    .neon-green { color: #00ff9d; text-shadow: 0 0 10px rgba(0, 255, 157, 0.4); }
-    .neon-red { color: #ff3366; text-shadow: 0 0 10px rgba(255, 51, 102, 0.4); }
-    .neon-blue { color: #00f3ff; text-shadow: 0 0 10px rgba(0, 243, 255, 0.4); }
-    
-    iframe { border-radius: 15px !important; border: 1px solid #1a1a1a !important; }
+    .neon-text { font-family: 'Courier New', monospace; font-weight: bold; }
+    .label { font-size: 0.7rem; color: #555; text-transform: uppercase; }
+    .value { font-size: 1.4rem; color: #fff; }
+    .buy-signal { color: #00ff9d; text-shadow: 0 0 10px #00ff9d55; }
+    .sell-signal { color: #ff3366; text-shadow: 0 0 10px #ff336655; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. CONEXÃO COM A EXCHANGE (MEXC FUTURES) ---
+# --- 2. CONEXÃO DIRETA (MEXC FUTURES) ---
 @st.cache_resource
-def connect_exchange():
+def connect():
     return ccxt.mexc({
         'apiKey': st.secrets.get("API_KEY", ""),
         'secret': st.secrets.get("SECRET_KEY", ""),
         'options': {'defaultType': 'swap'},
-        'enableRateLimit': True,
-        'adjustForTimeDifference': True
+        'enableRateLimit': True
     })
 
-mexc = connect_exchange()
+mexc = connect()
 
-# --- 3. MOTOR DE INTELIGÊNCIA (ANÁLISE M1 + M15) ---
-def get_institutional_signal(symbol):
+# --- 3. MOTOR SCALPER (M1 - ESTRATÉGIA AGRESSIVA) ---
+def get_scalper_intelligence(symbol):
     try:
-        # Busca dados de 1 minuto e 15 minutos
-        m1_data = mexc.fetch_ohlcv(symbol, timeframe='1m', limit=60)
-        m15_data = mexc.fetch_ohlcv(symbol, timeframe='15m', limit=60)
+        # Puxa apenas as últimas 30 velas de 1 minuto (Alta Velocidade)
+        ohlcv = mexc.fetch_ohlcv(symbol, timeframe='1m', limit=30)
+        df = pd.DataFrame(ohlcv, columns=['ts', 'o', 'h', 'l', 'close', 'v'])
         
-        df1 = pd.DataFrame(m1_data, columns=['ts', 'o', 'h', 'l', 'close', 'v'])
-        df15 = pd.DataFrame(m15_data, columns=['ts', 'o', 'h', 'l', 'close', 'v'])
+        # Indicadores de Curto Prazo (Scalping)
+        df['ema_fast'] = df['close'].ewm(span=5).mean()  # Média ultra rápida
+        df['ema_slow'] = df['close'].ewm(span=13).mean() # Média de confirmação
         
-        # Indicadores Nativos (Sem bibliotecas extras)
-        df1['ema_fast'] = df1['close'].ewm(span=9).mean()
-        df1['ema_slow'] = df1['close'].ewm(span=21).mean()
-        df15['ema_trend'] = df15['close'].ewm(span=20).mean()
-        
-        # RSI Manual
-        delta = df1['close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-        df1['rsi'] = 100 - (100 / (1 + (gain / loss)))
+        # RSI Curto (7 períodos) para identificar topos e fundos rápidos
+        delta = df['close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(7).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(7).mean()
+        df['rsi'] = 100 - (100 / (1 + (gain / loss)))
 
-        last1 = df1.iloc[-1]
-        last15 = df15.iloc[-1]
+        last = df.iloc[-1]
+        prev = df.iloc[-2]
         
-        # LÓGICA DE CONFLUÊNCIA ELITE
-        # Compra: M1 cruza acima + Preço acima da tendência M15 + RSI saudável
-        if last1['ema_fast'] > last1['ema_slow'] and last1['close'] > last15['ema_trend'] and last1['rsi'] < 65:
-            return "BUY CONFIRMED", "neon-green", "buy", last1['close'], last1['rsi']
+        # LÓGICA SCALPER:
+        # ENTRADA COMPRA: EMA 5 cruza acima da 13 + RSI saindo da zona de 30
+        if last['ema_fast'] > last['ema_slow'] and prev['ema_fast'] <= prev['ema_slow'] and last['rsi'] < 50:
+            return "SCALP BUY (LONG)", "buy-signal", "buy", last['close'], last['rsi']
         
-        # Venda: M1 cruza abaixo + Preço abaixo da tendência M15 + RSI saudável
-        elif last1['ema_fast'] < last1['ema_slow'] and last1['close'] < last15['ema_trend'] and last1['rsi'] > 35:
-            return "SELL CONFIRMED", "neon-red", "sell", last1['close'], last1['rsi']
+        # ENTRADA VENDA: EMA 5 cruza abaixo da 13 + RSI saindo da zona de 70
+        elif last['ema_fast'] < last['ema_slow'] and prev['ema_fast'] >= prev['ema_slow'] and last['rsi'] > 50:
+            return "SCALP SELL (SHORT)", "sell-signal", "sell", last['close'], last['rsi']
             
-        return "WAITING FLOW", "label", None, last1['close'], last1['rsi']
-    except Exception as e:
-        return f"SYNCING...", "label", None, 0.0, 50.0
-
-# --- 4. GESTÃO DE CARTEIRA ---
-def get_account_stats():
-    try:
-        bal = mexc.fetch_balance({'type': 'swap'})
-        return bal['USDT']['total'], bal['USDT']['free']
+        return "MONITORANDO...", "label", None, last['close'], last['rsi']
     except:
-        return 0.0, 0.0
+        return "SYNC...", "label", None, 0.0, 50.0
 
-# --- 5. EXECUÇÃO PROTEGIDA ---
-def execute_institutional_order(side, pair, lev, margin):
+# --- 4. EXECUÇÃO DE ALTA VELOCIDADE ---
+def execute_quick_trade(side, pair, lev, margin):
     try:
         sym = f"{pair.split('/')[0]}/USDT:USDT"
         mexc.set_leverage(lev, sym)
@@ -105,79 +81,74 @@ def execute_institutional_order(side, pair, lev, margin):
         price = ticker['last']
         qty = (margin * lev) / price
         
-        # Envia Ordem a Mercado
+        # Abre a ordem a mercado
         mexc.create_market_order(sym, side, qty)
-        return f"EXECUTED: {side.upper()} {qty:.4f} {pair} @ {price}"
+        return f"SCALP {side.upper()} @ {price} | VOL: {qty:.3f}"
     except Exception as e:
-        return f"ERROR: {str(e)}"
+        return f"ERRO: {e}"
 
-# --- 6. UI: PAINEL DE CONTROLE ---
+# --- 5. INTERFACE DO TERMINAL ---
 with st.sidebar:
-    st.markdown("### 🛡️ RISK CONTROL")
-    asset = st.selectbox("ASSET", ["BTC/USDT", "ETH/USDT", "SOL/USDT"])
-    leverage = st.slider("LEVERAGE", 1, 100, 20)
-    margin_per_trade = st.number_input("MARGIN ($)", value=50)
+    st.markdown("### ⚡ TURBO SCALPER SETTINGS")
+    asset = st.selectbox("ATIVO", ["BTC/USDT", "ETH/USDT", "SOL/USDT", "DOGE/USDT"])
+    lev = st.slider("ALAVANCAGEM", 1, 100, 50) # Scalpers usam alavancagem alta
+    trade_margin = st.number_input("MARGEM POR TIRO ($)", value=25)
     st.divider()
-    is_active = st.toggle("🚀 ARM SYSTEM (REAL MONEY)", value=False)
-    st.caption("Ao ativar, a IA executará ordens reais baseadas na confluência M1/M15.")
+    bot_active = st.toggle("🚨 ACTIVAR SCALPER AUTOMÁTICO", value=False)
+    st.info("Modo Scalper: Entradas baseadas em EMA 5/13 + RSI 7.")
 
-st.title("QUANT-OS V27 // THE VAULT")
+st.title("⚡ TURBO-QUANT SCALPER")
 
-# Gráfico TradingView (Estático)
+# Gráfico de 1 Minuto (Obrigatório para Scalping)
 st.components.v1.html(f"""
-    <div id="tv-chart" style="height:420px; border-radius:15px; overflow:hidden;"></div>
+    <div id="tv-chart" style="height:350px;"></div>
     <script src="https://s3.tradingview.com/tv.js"></script>
     <script>
     new TradingView.widget({{
         "autosize": true, "symbol": "MEXC:{asset.replace('/','')}.P",
-        "interval": "1", "theme": "dark", "style": "1", "container_id": "tv-chart"
+        "interval": "1", "theme": "dark", "style": "1", "container_id": "tv-chart", "hide_side_toolbar": true
     }});
     </script>
-""", height=420)
+""", height=350)
 
-# --- 7. CORE ENGINE (FRAGMENTO) ---
-@st.fragment(run_every=2)
-def institutional_engine(selected_asset):
-    sym_f = f"{selected_asset.split('/')[0]}/USDT:USDT"
+# --- 6. SCALPER CORE ENGINE ---
+@st.fragment(run_every=2) # Atualização a cada 2 segundos
+def run_scalper():
+    sym_f = f"{asset.split('/')[0]}/USDT:USDT"
     
-    # Busca Dados
-    total_eq, free_eq = get_account_stats()
-    signal_msg, signal_class, action, price, rsi_val = get_institutional_signal(sym_f)
+    # Wallet Status
+    bal = mexc.fetch_balance({'type': 'swap'})
+    equity = bal['USDT']['total']
+    available = bal['USDT']['free']
     
-    # Layout de Métricas
-    row1_c1, row1_c2, row1_c3 = st.columns(3)
-    with row1_c1:
-        st.markdown(f"<div class='glass-card'><div class='label'>EQUITY TOTAL</div><div class='value neon-blue'>$ {total_eq:,.2f}</div></div>", unsafe_allow_html=True)
-    with row1_c2:
-        st.markdown(f"<div class='glass-card'><div class='label'>DISPONÍVEL</div><div class='value'>$ {free_eq:,.2f}</div></div>", unsafe_allow_html=True)
-    with row1_c3:
-        st.markdown(f"<div class='glass-card'><div class='label'>MARKET PRICE</div><div class='value'>$ {price:,.2f}</div></div>", unsafe_allow_html=True)
-        
-    row2_c1, row2_c2, row2_c3 = st.columns(3)
-    with row2_c1:
-        st.markdown(f"<div class='glass-card'><div class='label'>IA SIGNAL (M1+M15)</div><div class='value {signal_class}'>{signal_msg}</div></div>", unsafe_allow_html=True)
-    with row2_c2:
-        st.markdown(f"<div class='glass-card'><div class='label'>RSI (14)</div><div class='value'>{rsi_val:.1f}</div></div>", unsafe_allow_html=True)
-    with row2_c3:
-        st.markdown(f"<div class='glass-card'><div class='label'>SYSTEM STATUS</div><div class='value' style='color:#f0b90b;'>{'ACTIVE' if is_active else 'STANDBY'}</div></div>", unsafe_allow_html=True)
+    # AI Analysis
+    msg, style, action, price, rsi_val = get_scalper_intelligence(sym_f)
+    
+    # Display Dashboard
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.markdown(f"<div class='scalp-card'><div class='label'>EQUITY</div><div class='value'>$ {equity:,.2f}</div></div>", unsafe_allow_html=True)
+    with c2:
+        st.markdown(f"<div class='scalp-card'><div class='label'>IA SIGNAL</div><div class='value {style}'>{msg}</div></div>", unsafe_allow_html=True)
+    with c3:
+        st.markdown(f"<div class='scalp-card'><div class='label'>PREÇO</div><div class='value'>$ {price:,.2f}</div></div>", unsafe_allow_html=True)
+    with c4:
+        st.markdown(f"<div class='scalp-card'><div class='label'>RSI-7</div><div class='value'>{rsi_val:.1f}</div></div>", unsafe_allow_html=True)
 
-    # Lógica de Disparo Real
-    if is_active and action:
-        # Cooldown de 2 minutos para evitar ordens duplicadas no mesmo sinal
-        if 'last_trade_time' not in st.session_state or (time.time() - st.session_state.last_trade_time > 120):
-            if free_eq >= margin_per_trade:
-                res = execute_institutional_order(action, selected_asset, leverage, margin_per_trade)
-                st.session_state.last_trade_time = time.time()
-                st.session_state.terminal_output = res
-                st.toast(res, icon="⚡")
-            else:
-                st.toast("SALDO INSUFICIENTE", icon="❌")
+    # Lógica de Execução Instantânea
+    if bot_active and action:
+        # Cooldown curto de 30 segundos (Scalper precisa de agilidade)
+        if 'last_scalp' not in st.session_state or (time.time() - st.session_state.last_scalp > 30):
+            if available >= trade_margin:
+                res = execute_quick_trade(action, asset, lev, trade_margin)
+                st.session_state.last_scalp = time.time()
+                st.session_state.scalp_log = res
+                st.toast(res, icon="🔥")
 
-# Inicialização de Log
-if 'terminal_output' not in st.session_state: st.session_state.terminal_output = "SYSTEM INITIALIZED. WAITING FOR CONFLUENCE..."
+if 'scalp_log' not in st.session_state: st.session_state.scalp_log = "AGUARDANDO OPORTUNIDADE..."
 
-institutional_engine(asset)
+run_scalper()
 
 st.divider()
-st.subheader("📝 INSTITUTIONAL LOG")
-st.code(f"> {st.session_state.terminal_output}")
+st.subheader("📟 SCALPER TERMINAL LOG")
+st.code(f"> {st.session_state.scalp_log}")
