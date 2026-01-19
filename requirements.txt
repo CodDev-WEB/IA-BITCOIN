@@ -1,7 +1,6 @@
 streamlit
 ccxt
 pandas
-streamlit-autorefresh
-requests
 plotly
+streamlit-autorefresh
 streamlit-echarts
