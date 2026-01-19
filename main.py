@@ -1,16 +1,11 @@
 import streamlit as st
 import ccxt
-import time
+import pandas as pd
 from datetime import datetime
 
 # --- 1. CONFIGURAÇÃO DE LAYOUT ---
-st.set_page_config(
-    page_title="IA-QUANT EXECUTOR V19", 
-    layout="wide", 
-    initial_sidebar_state="collapsed"
-)
+st.set_page_config(page_title="IA-QUANT PRO V20", layout="wide", initial_sidebar_state="collapsed")
 
-# Estilização CSS para manter o gráfico fixo e os números dinâmicos
 st.markdown("""
     <style>
     .block-container { padding-top: 1rem; background-color: #0b0e11; }
@@ -20,120 +15,117 @@ st.markdown("""
     }
     .value { font-size: 1.8rem; font-weight: bold; font-family: 'Courier New', monospace; color: #00ffcc; }
     .label { color: #848e9c; font-size: 0.9rem; }
-    iframe { border-radius: 8px !important; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. CONEXÃO COM A API (FUTUROS) ---
+# --- 2. CONEXÃO COM A API ---
 @st.cache_resource
 def get_mexc():
     return ccxt.mexc({
         'apiKey': st.secrets.get("API_KEY", ""),
         'secret': st.secrets.get("SECRET_KEY", ""),
         'options': {'defaultType': 'swap'},
-        'enableRateLimit': True,
-        'adjustForTimeDifference': True
+        'enableRateLimit': True
     })
 
 mexc = get_mexc()
 
-# --- 3. FUNÇÃO DE EXECUÇÃO DE ORDENS ---
-def executar_ordem_ia(lado, par_ativo, alavancagem_valor, volume_usd):
+# --- 3. MOTOR DE INTELIGÊNCIA (ANÁLISE TÉCNICA) ---
+def analisar_ia(df):
+    """
+    Simula o pensamento de uma IA Quantitativa usando indicadores técnicos.
+    """
+    # Médias Móveis (Tendência)
+    df['ema_fast'] = df['close'].ewm(span=9, adjust=False).mean()
+    df['ema_slow'] = df['close'].ewm(span=21, adjust=False).mean()
+    
+    # RSI (Índice de Força Relativa - Exaustão)
+    delta = df['close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    df['rsi'] = 100 - (100 / (1 + rs))
+    
+    ultimo_preço = df['close'].iloc[-1]
+    rsi_atual = df['rsi'].iloc[-1]
+    ema_f = df['ema_fast'].iloc[-1]
+    ema_s = df['ema_slow'].iloc[-1]
+    
+    # LÓGICA DE DECISÃO IA
+    if rsi_atual < 30 and ema_f > ema_s:
+        return "COMPRA (LONG)", "#00ffcc"  # Sobrevendido + Cruzamento de alta
+    elif rsi_atual > 70 and ema_f < ema_s:
+        return "VENDA (SHORT)", "#ff4d4d"  # Sobrecomprado + Cruzamento de baixa
+    else:
+        return "AGUARDANDO SINAL", "#848e9c"
+
+# --- 4. FUNÇÃO DE EXECUÇÃO ---
+def executar_ordem(lado, par, alavancagem, usd):
     try:
-        symbol = f"{par_ativo.split('/')[0]}/USDT:USDT"
-        
-        # Ajusta Alavancagem antes de abrir a posição
-        mexc.set_leverage(alavancagem_valor, symbol)
-        
-        # Obtém preço atual para calcular quantidade
-        ticker_info = mexc.fetch_ticker(symbol)
-        preco_atual = ticker_info['last']
-        
-        # Cálculo da Quantidade (Contratos)
-        quantidade_contratos = (volume_usd * alavancagem_valor) / preco_atual
+        symbol = f"{par.split('/')[0]}/USDT:USDT"
+        mexc.set_leverage(alavancagem, symbol)
+        ticker = mexc.fetch_ticker(symbol)
+        qty = (usd * alavancagem) / ticker['last']
         
         if lado == 'buy':
-            ordem = mexc.create_market_buy_order(symbol, quantidade_contratos)
+            mexc.create_market_buy_order(symbol, qty)
         else:
-            ordem = mexc.create_market_sell_order(symbol, quantidade_contratos)
+            mexc.create_market_sell_order(symbol, qty)
             
-        st.toast(f"🚀 ORDEM DE {lado.upper()} ENVIADA!", icon="✅")
-        return f"[{datetime.now().strftime('%H:%M:%S')}] {lado.upper()} executado: {quantidade_contratos:.4f} {symbol}"
-    except Exception as error:
-        return f"❌ Erro na API: {str(error)}"
+        return f"✅ {lado.upper()} executado: {qty:.4f} {symbol}"
+    except Exception as e:
+        return f"❌ Erro: {str(e)}"
 
-# --- 4. INTERFACE LATERAL ---
+# --- 5. INTERFACE ---
 with st.sidebar:
-    st.header("🎮 CONFIGURAÇÃO")
-    par_selecionado = st.selectbox("ATIVO", ["BTC/USDT", "ETH/USDT"], index=0)
+    st.header("⚙️ CONFIGURAÇÃO")
+    par_selecionado = st.selectbox("ATIVO", ["BTC/USDT", "ETH/USDT"])
     alavancagem = st.slider("ALAVANCAGEM", 1, 50, 10)
-    valor_trade = st.number_input("VALOR POR TRADE (USD)", value=50, step=10)
-    st.divider()
-    bot_ligado = st.toggle("🚨 EXECUTOR REAL ATIVO", value=False)
-    st.warning("Cuidado: Com o executor ativo, o robô abrirá posições reais na MEXC.")
+    valor_trade = st.number_input("USD POR TRADE", value=50)
+    bot_ligado = st.toggle("🚨 EXECUTOR ATIVO", value=False)
 
-# --- 5. TÍTULO E GRÁFICO (FIXOS) ---
-st.title("⚡ GEN-QUANT TERMINAL & EXECUTOR")
+st.title("⚡ GEN-QUANT AI EXECUTOR V20")
 
-# Widget TradingView de Futuros
+# Gráfico TradingView
 st.components.v1.html(f"""
-    <div id="tv-chart" style="height:450px;"></div>
-    <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
-    <script type="text/javascript">
-    new TradingView.widget({{
-      "autosize": true, "symbol": "MEXC:{par_selecionado.replace('/', '')}.P", 
-      "interval": "1", "theme": "dark", "style": "1", "locale": "br", "container_id": "tv-chart"
-    }});
-    </script>
-""", height=450)
+    <div id="tv-chart" style="height:400px;"></div>
+    <script src="https://s3.tradingview.com/tv.js"></script>
+    <script>new TradingView.widget({{"autosize":true,"symbol":"MEXC:{par_selecionado.replace('/','')}.P","interval":"1","theme":"dark","container_id":"tv-chart"}});</script>
+""", height=400)
 
-# --- 6. MOTOR DE DECISÃO E MONITOR (FRAGMENTO) ---
+# --- 6. FRAGMENTO DE EXECUÇÃO ---
 @st.fragment(run_every=3)
 def motor_ia(par):
     symbol_f = f"{par.split('/')[0]}/USDT:USDT"
-    
-    if 'log_operacao' not in st.session_state:
-        st.session_state.log_operacao = "Aguardando sinal estratégico..."
+    if 'logs' not in st.session_state: st.session_state.logs = "Iniciando análise..."
 
     try:
-        dados = mexc.fetch_ticker(symbol_f)
-        preco = dados['last']
-        maxima = dados['high']
-        minima = dados['low']
+        # Busca velas de 1 minuto para a IA analisar
+        ohlcv = mexc.fetch_ohlcv(symbol_f, timeframe='1m', limit=50)
+        df = pd.DataFrame(ohlcv, columns=['ts', 'open', 'high', 'low', 'close', 'vol'])
         
-        # Layout de Dados
-        col1, col2, col3 = st.columns(3)
-        col1.markdown(f"<div class='metric-card'><p class='label'>PREÇO FUTUROS</p><div class='value'>$ {preco:,.2f}</div></div>", unsafe_allow_html=True)
-        
-        # Estratégia de Validação
-        sinal = "AGUARDANDO"
-        cor = "#848e9c"
-        
-        if preco <= minima * 1.001:
-            sinal = "COMPRA (LONG)"
-            cor = "#00ffcc"
-            if bot_ligado:
-                st.session_state.log_operacao = executar_ordem_ia('buy', par, alavancagem, valor_trade)
-        elif preco >= maxima * 0.999:
-            sinal = "VENDA (SHORT)"
-            cor = "#ff4d4d"
-            if bot_ligado:
-                st.session_state.log_operacao = executar_ordem_ia('sell', par, alavancagem, valor_trade)
+        sinal, cor = analisar_ia(df)
+        preco = df['close'].iloc[-1]
+        rsi_val = df['rsi'].iloc[-1]
 
-        with col2:
-            st.markdown(f"<div class='metric-card'><p class='label'>SINAL IA</p><div class='value' style='color:{cor}'>{sinal}</div></div>", unsafe_allow_html=True)
-        with col3:
-            st.markdown(f"<div class='metric-card'><p class='label'>VARIAÇÃO 24H</p><div class='value'>{dados['percentage']}%</div></div>", unsafe_allow_html=True)
-            
-        st.caption(f"Motor em execução... Sync: {datetime.now().strftime('%H:%M:%S')}")
+        # Painel Visual
+        c1, c2, c3 = st.columns(3)
+        c1.markdown(f"<div class='metric-card'><p class='label'>PREÇO</p><div class='value'>$ {preco:,.2f}</div></div>", unsafe_allow_html=True)
+        with c2:
+            st.markdown(f"<div class='metric-card'><p class='label'>SINAL IA (RSI+EMA)</p><div class='value' style='color:{cor}'>{sinal}</div></div>", unsafe_allow_html=True)
+        c3.markdown(f"<div class='metric-card'><p class='label'>RSI (14)</p><div class='value' style='color:#f0b90b'>{rsi_val:.2f}</div></div>", unsafe_allow_html=True)
+
+        # Execução Automática
+        if bot_ligado:
+            if "COMPRA" in sinal:
+                st.session_state.logs = executar_ordem('buy', par, alavancagem, valor_trade)
+            elif "VENDA" in sinal:
+                st.session_state.logs = executar_ordem('sell', par, alavancagem, valor_trade)
 
     except Exception as e:
-        st.caption("A estabelecer ligação com a MEXC...")
+        st.caption("Aguardando dados...")
 
-# Iniciar o motor de monitorização
 motor_ia(par_selecionado)
 
-# --- 7. HISTÓRICO DE LOGS ---
 st.divider()
-st.subheader("📝 REGISTO DE EXECUÇÃO")
-st.code(st.session_state.log_operacao)
+st.code(st.session_state.logs)
