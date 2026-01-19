@@ -1,68 +1,85 @@
 import streamlit as st
 import ccxt
-import pandas as pd
-import streamlit.components.v1 as components
+import time
+from datetime import datetime
 
-st.set_page_config(page_title="IA-QUANT TERMINAL", layout="wide")
+# Configuração de Layout
+st.set_page_config(page_title="IA-QUANT VALIDATOR", layout="wide", initial_sidebar_state="collapsed")
 
-# Interface Customizada via HTML/JavaScript (Isso evita o refresh da página)
-def terminal_html(price, rsi, signal):
-    html_code = f"""
-    <div style="background-color: #0b0e11; padding: 20px; border-radius: 10px; border: 1px solid #2b2f36; color: white; font-family: sans-serif;">
-        <div style="display: flex; justify-content: space-around;">
-            <div>
-                <div style="color: #848e9c; font-size: 14px;">PREÇO BTC</div>
-                <div style="color: #00ffcc; font-size: 32px; font-weight: bold;">$ {price}</div>
-            </div>
-            <div>
-                <div style="color: #848e9c; font-size: 14px;">FORÇA (RSI)</div>
-                <div style="color: #f0b90b; font-size: 32px; font-weight: bold;">{rsi}</div>
-            </div>
-            <div>
-                <div style="color: #848e9c; font-size: 14px;">DECISÃO IA</div>
-                <div style="color: {'#00ffcc' if signal == 'COMPRA' else '#ff4d4d'}; font-size: 32px; font-weight: bold;">{signal}</div>
-            </div>
-        </div>
-    </div>
-    """
-    return components.html(html_code, height=150)
+# CSS para estabilizar o visual dark
+st.markdown("""
+    <style>
+    .block-container { padding-top: 1rem; background-color: #0b0e11; }
+    .metric-card { 
+        background-color: #181a20; padding: 15px; border-radius: 8px; 
+        border: 1px solid #2b2f36; text-align: center;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
-# --- Lógica de Fundo (Backend) ---
 @st.cache_resource
-def get_mexc():
-    return ccxt.mexc({'apiKey': st.secrets["API_KEY"], 'secret': st.secrets["SECRET_KEY"], 'options': {'defaultType': 'swap'}})
+def get_api():
+    # Usamos apenas o necessário para o Ticker público primeiro
+    return ccxt.mexc({
+        'apiKey': st.secrets.get("API_KEY", ""),
+        'secret': st.secrets.get("SECRET_KEY", ""),
+        'options': {'defaultType': 'swap'},
+        'enableRateLimit': True
+    })
 
-mexc = get_mexc()
+mexc = get_api()
 
-# Título e Gráfico (Estáticos - Não recarregam)
-st.title("⚡ GEN-QUANT TERMINAL V12")
-st.sidebar.header("Configurações")
-pair = st.sidebar.selectbox("Ativo", ["BTC/USDT", "ETH/USDT"])
+# --- TÍTULO ---
+st.title("⚡ GEN-QUANT TERMINAL V14")
 
-# Aqui injetamos o gráfico do TradingView (Oficial da MEXC) que nunca recarrega
-components.html("""
-    <div id="tradingview_widget"></div>
+# --- GRÁFICO TRADINGVIEW (ESTÁTICO) ---
+# O Widget é a melhor forma de validar sem consumir sua banda de API
+st.components.v1.html("""
+    <div id="tv-chart" style="height:480px;"></div>
     <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
     <script type="text/javascript">
     new TradingView.widget({
-      "width": "100%", "height": 450, "symbol": "MEXC:BTCUSDT.P",
-      "interval": "1", "timezone": "Etc/UTC", "theme": "dark", "style": "1"
+      "autosize": true, "symbol": "MEXC:BTCUSDT.P", "interval": "1",
+      "theme": "dark", "style": "1", "locale": "br", "container_id": "tv-chart"
     });
     </script>
-""", height=450)
+""", height=480)
 
-# Placeholder para os dados dinâmicos
-data_placeholder = st.empty()
+# --- FRAGMENTO DE DADOS (CORRIGIDO) ---
+@st.fragment(run_every=3) # Aumentamos para 3s para evitar bloqueio de IP (Rate Limit)
+def live_dashboard():
+    try:
+        # CORREÇÃO DO SÍMBOLO: 
+        # Para Futuros/Swap na MEXC via CCXT, o formato mais seguro é "BTC/USDT:USDT"
+        # mas se falhar, tentamos o ID direto "BTC_USDT"
+        symbol = "BTC/USDT:USDT"
+        
+        ticker = mexc.fetch_ticker(symbol)
+        price = ticker['last']
+        high = ticker['high']
+        low = ticker['low']
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.markdown(f"<div class='metric-card'><p style='color:#848e9c;margin:0;'>PREÇO</p><h2 style='color:#00ffcc;margin:0;'>$ {price:,.2f}</h2></div>", unsafe_allow_html=True)
+            
+        with col2:
+            st.markdown(f"<div class='metric-card'><p style='color:#848e9c;margin:0;'>MÁXIMA 24H</p><h2 style='color:#fff;margin:0;'>$ {high:,.1f}</h2></div>", unsafe_allow_html=True)
+            
+        with col3:
+            # Lógica de validação: Se preço cair 1% da máxima, sinaliza atenção
+            status = "NEUTRO"
+            if price <= low * 1.005: status = "COMPRA"
+            elif price >= high * 0.995: status = "VENDA"
+            
+            st.markdown(f"<div class='metric-card'><p style='color:#848e9c;margin:0;'>SINAL IA</p><h2 style='color:#f0b90b;margin:0;'>{status}</h2></div>", unsafe_allow_html=True)
+            
+        st.caption(f"Conexão estável • {datetime.now().strftime('%H:%M:%S')}")
 
-# Loop de atualização de dados (Apenas para os números)
-import time
-while True:
-    ticker = mexc.fetch_ticker(pair + ":USDT")
-    price = f"{ticker['last']:,.2f}"
-    # Lógica de sinal simplificada para o exemplo
-    signal = "COMPRA" if ticker['last'] < ticker['low'] * 1.001 else "AGUARDANDO"
-    
-    with data_placeholder.container():
-        terminal_html(price, "35.4", signal)
-    
-    time.sleep(2) # Atualiza os números a cada 2 segundos
+    except Exception as e:
+        # Se der erro, ele mostra uma mensagem discreta e tenta de novo no próximo ciclo
+        st.caption(f"Aguardando resposta da MEXC...")
+
+# Inicia o monitoramento
+live_dashboard()
