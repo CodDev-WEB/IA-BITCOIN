@@ -4,250 +4,180 @@ import pandas as pd
 import time
 from datetime import datetime
 
-# --- 1. CONFIGURAÇÃO "ELITE" (VISUAL CYBERPUNK) ---
-st.set_page_config(page_title="QUANT-OS ELITE", layout="wide", initial_sidebar_state="collapsed")
+# --- 1. CONFIGURAÇÃO DE INTERFACE ULTRA-PREMIUM ---
+st.set_page_config(
+    page_title="QUANT-OS V27 // THE VAULT", 
+    layout="wide", 
+    initial_sidebar_state="collapsed"
+)
 
-# CSS Avançado: Fundo gradiente, Cartões de Vidro (Glassmorphism), Fontes Mono
+# Estilização CSS: Glassmorphism, Neon e Deep Space
 st.markdown("""
     <style>
-    /* Fundo Deep Space */
-    .stApp {
-        background: radial-gradient(circle at 10% 20%, #0b0e11 0%, #000000 90%);
-        color: #e0e0e0;
-    }
-    
-    /* Remover barras padrão do Streamlit */
+    .stApp { background: #050505; color: #e0e0e0; }
     header {visibility: hidden;}
-    footer {visibility: hidden;}
     
-    /* Cartões "Glassmorphism" (Efeito de Vidro) */
     .glass-card {
-        background: rgba(255, 255, 255, 0.03);
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 12px;
+        background: rgba(20, 20, 25, 0.8);
+        border: 1px solid rgba(0, 243, 255, 0.2);
+        border-radius: 15px;
         padding: 20px;
-        margin-bottom: 15px;
-        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
         text-align: center;
-        transition: transform 0.2s;
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.8);
+        margin-bottom: 10px;
     }
-    .glass-card:hover {
-        border: 1px solid rgba(0, 240, 255, 0.3);
-        box-shadow: 0 0 15px rgba(0, 240, 255, 0.1);
-    }
-
-    /* Tipografia Elite */
-    .label {
-        font-family: 'Segoe UI', sans-serif;
-        font-size: 0.8rem;
-        text-transform: uppercase;
-        letter-spacing: 2px;
-        color: #8b949e;
-        margin-bottom: 5px;
-    }
-    .value {
-        font-family: 'Courier New', monospace;
-        font-size: 1.8rem;
-        font-weight: 700;
-        color: #fff;
-        text-shadow: 0 0 10px rgba(255, 255, 255, 0.1);
-    }
+    
+    .label { font-size: 0.7rem; letter-spacing: 2px; color: #666; text-transform: uppercase; margin-bottom: 8px; }
+    .value { font-size: 1.6rem; font-family: 'Courier New', monospace; font-weight: bold; color: #fff; }
+    
     .neon-green { color: #00ff9d; text-shadow: 0 0 10px rgba(0, 255, 157, 0.4); }
     .neon-red { color: #ff3366; text-shadow: 0 0 10px rgba(255, 51, 102, 0.4); }
     .neon-blue { color: #00f3ff; text-shadow: 0 0 10px rgba(0, 243, 255, 0.4); }
     
-    /* Ajuste de Gráfico */
-    iframe { border-radius: 12px !important; border: 1px solid #2d2d2d; }
+    iframe { border-radius: 15px !important; border: 1px solid #1a1a1a !important; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. CONEXÃO BANCÁRIA (API) ---
+# --- 2. CONEXÃO COM A EXCHANGE (MEXC FUTURES) ---
 @st.cache_resource
-def connect_bank():
+def connect_exchange():
     return ccxt.mexc({
         'apiKey': st.secrets.get("API_KEY", ""),
         'secret': st.secrets.get("SECRET_KEY", ""),
-        'options': {'defaultType': 'swap'}, # CRUCIAL: MODO FUTUROS
-        'enableRateLimit': True
+        'options': {'defaultType': 'swap'},
+        'enableRateLimit': True,
+        'adjustForTimeDifference': True
     })
 
-mexc = connect_bank()
+mexc = connect_exchange()
 
-# --- 3. INTELIGÊNCIA MATEMÁTICA (NATIVA) ---
-def get_market_intelligence(symbol):
+# --- 3. MOTOR DE INTELIGÊNCIA (ANÁLISE M1 + M15) ---
+def get_institutional_signal(symbol):
     try:
-        # Puxa dados brutos
-        ohlcv = mexc.fetch_ohlcv(symbol, timeframe='1m', limit=60)
-        df = pd.DataFrame(ohlcv, columns=['ts', 'open', 'high', 'low', 'close', 'vol'])
+        # Busca dados de 1 minuto e 15 minutos
+        m1_data = mexc.fetch_ohlcv(symbol, timeframe='1m', limit=60)
+        m15_data = mexc.fetch_ohlcv(symbol, timeframe='15m', limit=60)
         
-        # Matemática Financeira (Sem bibliotecas externas)
-        df['ema_fast'] = df['close'].ewm(span=9).mean()
-        df['ema_slow'] = df['close'].ewm(span=21).mean()
+        df1 = pd.DataFrame(m1_data, columns=['ts', 'o', 'h', 'l', 'close', 'v'])
+        df15 = pd.DataFrame(m15_data, columns=['ts', 'o', 'h', 'l', 'close', 'v'])
         
-        delta = df['close'].diff()
+        # Indicadores Nativos (Sem bibliotecas extras)
+        df1['ema_fast'] = df1['close'].ewm(span=9).mean()
+        df1['ema_slow'] = df1['close'].ewm(span=21).mean()
+        df15['ema_trend'] = df15['close'].ewm(span=20).mean()
+        
+        # RSI Manual
+        delta = df1['close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-        df['rsi'] = 100 - (100 / (1 + (gain / loss)))
+        df1['rsi'] = 100 - (100 / (1 + (gain / loss)))
+
+        last1 = df1.iloc[-1]
+        last15 = df15.iloc[-1]
         
-        last = df.iloc[-1]
-        prev = df.iloc[-2]
+        # LÓGICA DE CONFLUÊNCIA ELITE
+        # Compra: M1 cruza acima + Preço acima da tendência M15 + RSI saudável
+        if last1['ema_fast'] > last1['ema_slow'] and last1['close'] > last15['ema_trend'] and last1['rsi'] < 65:
+            return "BUY CONFIRMED", "neon-green", "buy", last1['close'], last1['rsi']
         
-        # Algoritmo de Decisão
-        status = "NEUTRO"
-        cor = "#8b949e"
-        acao = None
-        
-        # Lógica Sniper: Cruzamento + Confirmação RSI
-        if last['ema_fast'] > last['ema_slow'] and prev['ema_fast'] <= prev['ema_slow'] and last['rsi'] < 60:
-            status = "COMPRA AGRESSIVA"
-            cor = "neon-green"
-            acao = "buy"
-        elif last['ema_fast'] < last['ema_slow'] and prev['ema_fast'] >= prev['ema_slow'] and last['rsi'] > 40:
-            status = "VENDA FORTE"
-            cor = "neon-red"
-            acao = "sell"
+        # Venda: M1 cruza abaixo + Preço abaixo da tendência M15 + RSI saudável
+        elif last1['ema_fast'] < last1['ema_slow'] and last1['close'] < last15['ema_trend'] and last1['rsi'] > 35:
+            return "SELL CONFIRMED", "neon-red", "sell", last1['close'], last1['rsi']
             
-        return status, cor, acao, last['close'], last['rsi']
-    except:
-        return "SYNC...", "#fff", None, 0.0, 50.0
-
-# --- 4. GESTÃO DE CARTEIRA (NOVA FUNÇÃO) ---
-def get_wallet_status():
-    try:
-        # Pega saldo ESPECÍFICO de Futuros (Swap)
-        balance = mexc.fetch_balance({'type': 'swap'})
-        usdt_total = balance['USDT']['total']
-        usdt_free = balance['USDT']['free']
-        usdt_used = balance['USDT']['used']
-        return usdt_total, usdt_free, usdt_used
+        return "WAITING FLOW", "label", None, last1['close'], last1['rsi']
     except Exception as e:
-        return 0.0, 0.0, 0.0
+        return f"SYNCING...", "label", None, 0.0, 50.0
 
-# --- 5. EXECUÇÃO DE ALTA FREQUÊNCIA ---
-def execute_order(side, pair, lev, amount_usd):
+# --- 4. GESTÃO DE CARTEIRA ---
+def get_account_stats():
+    try:
+        bal = mexc.fetch_balance({'type': 'swap'})
+        return bal['USDT']['total'], bal['USDT']['free']
+    except:
+        return 0.0, 0.0
+
+# --- 5. EXECUÇÃO PROTEGIDA ---
+def execute_institutional_order(side, pair, lev, margin):
     try:
         sym = f"{pair.split('/')[0]}/USDT:USDT"
         mexc.set_leverage(lev, sym)
         ticker = mexc.fetch_ticker(sym)
         price = ticker['last']
-        qty = (amount_usd * lev) / price # Qty em Moeda
+        qty = (margin * lev) / price
         
-        if side == 'buy':
-            mexc.create_market_buy_order(sym, qty)
-        else:
-            mexc.create_market_sell_order(sym, qty)
-        return f"ORDEM EXECUTADA: {side.upper()} | ${amount_usd} @ {price}"
+        # Envia Ordem a Mercado
+        mexc.create_market_order(sym, side, qty)
+        return f"EXECUTED: {side.upper()} {qty:.4f} {pair} @ {price}"
     except Exception as e:
-        return f"ERRO EXECUÇÃO: {e}"
+        return f"ERROR: {str(e)}"
 
-# --- 6. INTERFACE ELITE (LAYOUT) ---
-
-# Sidebar Minimalista
+# --- 6. UI: PAINEL DE CONTROLE ---
 with st.sidebar:
-    st.markdown("## ⚙️ SYSTEM CONTROL")
-    active_pair = st.selectbox("ASSET", ["BTC/USDT", "ETH/USDT", "SOL/USDT"])
-    leverage = st.slider("LEVERAGE (x)", 1, 100, 20)
-    risk_usd = st.number_input("MARGIN PER TRADE ($)", value=100)
+    st.markdown("### 🛡️ RISK CONTROL")
+    asset = st.selectbox("ASSET", ["BTC/USDT", "ETH/USDT", "SOL/USDT"])
+    leverage = st.slider("LEVERAGE", 1, 100, 20)
+    margin_per_trade = st.number_input("MARGIN ($)", value=50)
     st.divider()
-    system_arm = st.toggle("⚠️ ARM SYSTEM (REAL MONEY)", value=False)
+    is_active = st.toggle("🚀 ARM SYSTEM (REAL MONEY)", value=False)
+    st.caption("Ao ativar, a IA executará ordens reais baseadas na confluência M1/M15.")
 
-st.title("QUANT-OS // ELITE TERMINAL")
+st.title("QUANT-OS V27 // THE VAULT")
 
-# Container do Gráfico (Fixo)
+# Gráfico TradingView (Estático)
 st.components.v1.html(f"""
-    <div id="tv_chart" style="height:480px; border-radius:12px; overflow:hidden;"></div>
+    <div id="tv-chart" style="height:420px; border-radius:15px; overflow:hidden;"></div>
     <script src="https://s3.tradingview.com/tv.js"></script>
     <script>
     new TradingView.widget({{
-        "autosize": true,
-        "symbol": "MEXC:{active_pair.replace('/','')}.P",
-        "interval": "1",
-        "timezone": "Etc/UTC",
-        "theme": "dark",
-        "style": "1",
-        "locale": "en",
-        "toolbar_bg": "#000000",
-        "enable_publishing": false,
-        "hide_top_toolbar": false,
-        "container_id": "tv_chart"
+        "autosize": true, "symbol": "MEXC:{asset.replace('/','')}.P",
+        "interval": "1", "theme": "dark", "style": "1", "container_id": "tv-chart"
     }});
     </script>
-""", height=480)
+""", height=420)
 
-# --- 7. FRAGMENTO "CORE" (ATUALIZAÇÃO TOTAL) ---
+# --- 7. CORE ENGINE (FRAGMENTO) ---
 @st.fragment(run_every=2)
-def live_core(symbol):
-    sym_fmt = f"{symbol.split('/')[0]}/USDT:USDT"
+def institutional_engine(selected_asset):
+    sym_f = f"{selected_asset.split('/')[0]}/USDT:USDT"
     
-    # 1. Puxa Saldo em Tempo Real
-    total, free, used = get_wallet_status()
+    # Busca Dados
+    total_eq, free_eq = get_account_stats()
+    signal_msg, signal_class, action, price, rsi_val = get_institutional_signal(sym_f)
     
-    # 2. Puxa Inteligência de Mercado
-    signal, color_class, action, price, rsi_val = get_market_intelligence(sym_fmt)
-    
-    # --- LINHA 1: CARTEIRA (WALLET) ---
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.markdown(f"""
-        <div class='glass-card'>
-            <div class='label'>EQUITY TOTAL (USDT)</div>
-            <div class='value neon-blue'>$ {total:,.2f}</div>
-        </div>""", unsafe_allow_html=True)
-    with c2:
-        st.markdown(f"""
-        <div class='glass-card'>
-            <div class='label'>DISPONÍVEL</div>
-            <div class='value'>$ {free:,.2f}</div>
-        </div>""", unsafe_allow_html=True)
-    with c3:
-        st.markdown(f"""
-        <div class='glass-card'>
-            <div class='label'>EM ORDEM (MARGEM)</div>
-            <div class='value' style='color:#ffcc00;'>$ {used:,.2f}</div>
-        </div>""", unsafe_allow_html=True)
+    # Layout de Métricas
+    row1_c1, row1_c2, row1_c3 = st.columns(3)
+    with row1_c1:
+        st.markdown(f"<div class='glass-card'><div class='label'>EQUITY TOTAL</div><div class='value neon-blue'>$ {total_eq:,.2f}</div></div>", unsafe_allow_html=True)
+    with row1_c2:
+        st.markdown(f"<div class='glass-card'><div class='label'>DISPONÍVEL</div><div class='value'>$ {free_eq:,.2f}</div></div>", unsafe_allow_html=True)
+    with row1_c3:
+        st.markdown(f"<div class='glass-card'><div class='label'>MARKET PRICE</div><div class='value'>$ {price:,.2f}</div></div>", unsafe_allow_html=True)
+        
+    row2_c1, row2_c2, row2_c3 = st.columns(3)
+    with row2_c1:
+        st.markdown(f"<div class='glass-card'><div class='label'>IA SIGNAL (M1+M15)</div><div class='value {signal_class}'>{signal_msg}</div></div>", unsafe_allow_html=True)
+    with row2_c2:
+        st.markdown(f"<div class='glass-card'><div class='label'>RSI (14)</div><div class='value'>{rsi_val:.1f}</div></div>", unsafe_allow_html=True)
+    with row2_c3:
+        st.markdown(f"<div class='glass-card'><div class='label'>SYSTEM STATUS</div><div class='value' style='color:#f0b90b;'>{'ACTIVE' if is_active else 'STANDBY'}</div></div>", unsafe_allow_html=True)
 
-    # --- LINHA 2: MERCADO (MARKET DATA) ---
-    k1, k2, k3 = st.columns(3)
-    with k1:
-        st.markdown(f"""
-        <div class='glass-card'>
-            <div class='label'>PREÇO ATUAL</div>
-            <div class='value'>$ {price:,.2f}</div>
-        </div>""", unsafe_allow_html=True)
-    with k2:
-        st.markdown(f"""
-        <div class='glass-card'>
-            <div class='label'>INTELIGÊNCIA ARTIFICIAL</div>
-            <div class='value {color_class}'>{signal}</div>
-        </div>""", unsafe_allow_html=True)
-    with k3:
-        st.markdown(f"""
-        <div class='glass-card'>
-            <div class='label'>RSI INDEX</div>
-            <div class='value'>{rsi_val:.1f}</div>
-        </div>""", unsafe_allow_html=True)
-
-    # --- LÓGICA DE TIRO (EXECUÇÃO) ---
-    if system_arm and action:
-        # Check simples para não floodar ordens (1 min cooldown)
-        if 'last_shot' not in st.session_state or (time.time() - st.session_state.last_shot > 60):
-            # Validação de Saldo
-            if free >= risk_usd:
-                log = execute_order(action, symbol, leverage, risk_usd)
-                st.toast(log, icon="⚡")
-                st.session_state.terminal_log = f"[{datetime.now().strftime('%H:%M:%S')}] {log}"
-                st.session_state.last_shot = time.time()
+    # Lógica de Disparo Real
+    if is_active and action:
+        # Cooldown de 2 minutos para evitar ordens duplicadas no mesmo sinal
+        if 'last_trade_time' not in st.session_state or (time.time() - st.session_state.last_trade_time > 120):
+            if free_eq >= margin_per_trade:
+                res = execute_institutional_order(action, selected_asset, leverage, margin_per_trade)
+                st.session_state.last_trade_time = time.time()
+                st.session_state.terminal_output = res
+                st.toast(res, icon="⚡")
             else:
-                st.toast("SALDO INSUFICIENTE PARA OPERAR", icon="❌")
+                st.toast("SALDO INSUFICIENTE", icon="❌")
 
-# Inicialização de Estado
-if 'terminal_log' not in st.session_state: st.session_state.terminal_log = "SYSTEM READY..."
+# Inicialização de Log
+if 'terminal_output' not in st.session_state: st.session_state.terminal_output = "SYSTEM INITIALIZED. WAITING FOR CONFLUENCE..."
 
-# Inicia o Core
-live_core(active_pair)
+institutional_engine(asset)
 
-# Rodapé: Terminal Log
-st.markdown("---")
-st.markdown(f"<div style='color:#444; font-family:monospace;'>TERMINAL_LOG: > {st.session_state.terminal_log}</div>", unsafe_allow_html=True)
+st.divider()
+st.subheader("📝 INSTITUTIONAL LOG")
+st.code(f"> {st.session_state.terminal_output}")
