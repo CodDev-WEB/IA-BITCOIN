@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Terminal IA Quant</title>
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        body { background: #0b0e11; color: white; font-family: sans-serif; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; padding: 20px; }
+        .card { background: #1e2329; padding: 20px; border-radius: 8px; border: 1px solid #30363d; }
+        .price { font-size: 24px; color: #00ffcc; font-weight: bold; }
+        #chart { height: 400px; width: 100%; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="grid">
+        <div class="card">
+            <div>PREÇO BTC</div>
+            <div id="btc-price" class="price">Carregando...</div>
+        </div>
+        <div class="card">
+            <div>STATUS IA</div>
+            <div id="bot-status" style="color: #f0b90b;">ANALISANDO</div>
+        </div>
+        <div class="card">
+            <div>PNL HOJE</div>
+            <div id="pnl" style="color: #00ffcc;">+ $0.00</div>
+        </div>
+    </div>
+
+    <div id="chart"></div>
+
+    <script>
+        // Função para atualizar os números sem recarregar a página
+        async function updateData() {
+            try {
+                const response = await fetch('http://127.0.0.1:8000/api/data');
+                const data = await response.json();
+                document.getElementById('btc-price').innerText = `$ ${data.price.toLocaleString()}`;
+            } catch (e) { console.log("Erro ao buscar dados"); }
+        }
+
+        // Atualiza a cada 2 segundos
+        setInterval(updateData, 2000);
+    </script>
+</body>
+</html>
