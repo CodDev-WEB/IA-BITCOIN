@@ -3,3 +3,5 @@ ccxt
 pandas
 streamlit-autorefresh
 requests
+plotly
+streamlit-echarts
