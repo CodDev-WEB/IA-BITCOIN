@@ -1,5 +1,4 @@
-streamlit
+streamlit>=1.37.0
 ccxt
 pandas
-plotly
-streamlit-autorefresh
+pandas_ta
