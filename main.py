@@ -3,41 +3,31 @@ import ccxt
 import pandas as pd
 import time
 import numpy as np
-from datetime import datetime
 
 # --- 1. SETUP DE INTERFACE ---
-st.set_page_config(page_title="V41 // HYPER-SCALPER", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="V42 // OMNI-QUANT", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
     <style>
-    .stApp { background-color: #0d1117; color: #e6edf3; }
+    .stApp { background-color: #010409; color: #e6edf3; }
     header {visibility: hidden;}
     .metric-card {
-        background: #161b22;
-        border: 1px solid #30363d;
-        border-radius: 10px;
-        padding: 20px;
-        text-align: center;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+        background: #0d1117; border: 1px solid #30363d; border-radius: 10px;
+        padding: 15px; text-align: center;
     }
-    .neon-gold { color: #f0b90b; font-size: 26px; font-weight: bold; text-shadow: 0 0 10px #f0b90b55; }
+    .neon-blue { color: #00d4ff; text-shadow: 0 0 10px #00d4ff55; font-weight: bold; }
     .neon-green { color: #39ff14; font-weight: bold; }
     .neon-red { color: #ff3131; font-weight: bold; }
     .terminal-box {
-        background: #010409;
-        color: #00ff41;
-        padding: 15px;
-        border-radius: 8px;
-        font-family: 'Courier New', monospace;
-        font-size: 0.8rem;
-        border-left: 4px solid #f0b90b;
+        background: #000; color: #0f0; padding: 12px;
+        border-radius: 5px; font-family: monospace; font-size: 0.8rem;
     }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. CONEXÃO CORE ---
+# --- 2. CONEXÃO COM ENGINE ---
 @st.cache_resource
-def get_mexc():
+def init_mexc():
     return ccxt.mexc({
         'apiKey': st.secrets.get("API_KEY", ""),
         'secret': st.secrets.get("SECRET_KEY", ""),
@@ -45,141 +35,153 @@ def get_mexc():
         'enableRateLimit': True
     })
 
-mexc = get_mexc()
+mexc = init_mexc()
 
-# --- 3. MOTOR DE ANÁLISE HYPER (EMA 3/8 + RSI + BOLLINGER) ---
-def get_hyper_analysis(symbol):
+# --- 3. MOTOR OMNI-ANALYSIS (CRÍTICO) ---
+def get_omni_signals(symbol):
     try:
-        # Puxa 100 velas (Timeframe de 1m ou 5m conforme selecionado)
-        ohlcv = mexc.fetch_ohlcv(symbol, timeframe='1m', limit=100)
-        df = pd.DataFrame(ohlcv, columns=['ts', 'o', 'h', 'l', 'close', 'v'])
+        # A. Busca OHLCV (1m e 3m)
+        ohlcv1m = mexc.fetch_ohlcv(symbol, timeframe='1m', limit=50)
+        df = pd.DataFrame(ohlcv1m, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
         
-        # --- ATUALIZAÇÃO: EMA 3 (Gatilho) e EMA 8 (Tendência Curta) ---
-        df['ema3'] = df['close'].ewm(span=3).mean()
-        df['ema8'] = df['close'].ewm(span=8).mean()
+        # B. VWAP e Distância
+        df['tp'] = (df['h'] + df['l'] + df['c']) / 3
+        df['vwap'] = (df['tp'] * df['v']).cumsum() / df['v'].cumsum()
+        dist_vwap = ((df['c'].iloc[-1] / df['vwap'].iloc[-1]) - 1) * 100
         
-        # Bollinger Bands para reversão rápida
-        df['sma20'] = df['close'].rolling(20).mean()
-        df['std20'] = df['close'].rolling(20).std()
-        df['up'] = df['sma20'] + (df['std20'] * 2)
-        df['lw'] = df['sma20'] - (df['std20'] * 2)
-        
-        # RSI 7 (Rápido para Scalping)
-        delta = df['close'].diff()
+        # C. EMAs 9/21 e RSI Curto (7)
+        df['ema9'] = df['c'].ewm(span=9).mean()
+        df['ema21'] = df['c'].ewm(span=21).mean()
+        delta = df['c'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(7).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(7).mean()
-        df['rsi'] = 100 - (100 / (1 + (gain / loss)))
+        rsi7 = 100 - (100 / (1 + (gain / loss))).iloc[-1]
+        
+        # D. Dados Institucionais (Funding & Open Interest)
+        params = {'symbol': symbol}
+        funding = mexc.fetch_funding_rate(symbol)
+        f_rate = funding['fundingRate'] if funding else 0
+        
+        # E. Order Book (Liquidez Nível 1)
+        ob = mexc.fetch_order_book(symbol, limit=5)
+        bid_vol = sum([b[1] for b in ob['bids']])
+        ask_vol = sum([a[1] for a in ob['asks']])
+        book_imbalance = (bid_vol / (bid_vol + ask_vol)) - 0.5
 
-        last = df.iloc[-1]
+        # F. Velocidade do Preço (Price Velocity)
+        velocity = (df['c'].iloc[-1] - df['c'].iloc[-5]) / 5
+
+        # --- SCORE ENGINE (PESOS CRÍTICOS) ---
         score = 0
+        # Tendência e Momentum
+        if df['ema9'].iloc[-1] > df['ema21'].iloc[-1]: score += 1
+        if rsi7 < 30: score += 2 # Sobrevenda extrema
+        if rsi7 > 70: score -= 2 # Sobrecompra extrema
         
-        # LÓGICA DE CONFLUÊNCIA V41
-        # Compra: EMA3 acima da 8 + Preço nas bandas + RSI baixo
-        if last['ema3'] > last['ema8']: score += 1
-        if last['close'] < last['lw']: score += 2
-        if last['rsi'] < 30: score += 1
+        # Liquidez e Volume
+        if book_imbalance > 0.1: score += 1.5 # Pressão de compra no book
+        if book_imbalance < -0.1: score -= 1.5 # Pressão de venda no book
         
-        # Venda: EMA3 abaixo da 8 + Preço nas bandas + RSI alto
-        if last['ema3'] < last['ema8']: score -= 1
-        if last['close'] > last['up']: score -= 2
-        if last['rsi'] > 70: score -= 1
-        
-        if score >= 3: return "HYPER COMPRA", "neon-green", "buy", last['close'], score
-        if score <= -3: return "HYPER VENDA", "neon-red", "sell", last['close'], score
-        return "MONITORANDO", "white", None, last['close'], score
-    except:
-        return "SYNCING...", "white", None, 0.0, 0
+        # Distância VWAP (Reversão à média)
+        if dist_vwap < -0.5: score += 2 # Muito abaixo da VWAP
+        if dist_vwap > 0.5: score -= 2 # Muito acima da VWAP
 
-# --- 4. EXECUÇÃO DE ORDENS ---
-def execute_order(side, pair, lev, compound_pct, m_type):
+        # Decisão Final
+        action = None
+        if score >= 3.5: action = "buy"
+        elif score <= -3.5: action = "sell"
+        
+        return {
+            "label": "BUY ALERT" if action == "buy" else "SELL ALERT" if action == "sell" else "NEUTRAL",
+            "color": "neon-green" if action == "buy" else "neon-red" if action == "sell" else "white",
+            "action": action,
+            "price": df['c'].iloc[-1],
+            "score": score,
+            "vwap_dist": dist_vwap,
+            "funding": f_rate
+        }
+    except Exception as e:
+        st.error(f"Erro na análise: {e}")
+        return None
+
+# --- 4. EXECUÇÃO DE ALTA FREQUÊNCIA ---
+def execute_omni_trade(side, pair, lev, compound_pct, m_type):
     try:
         symbol = f"{pair.split('/')[0]}/USDT:USDT"
         m_code = 1 if m_type == "Isolada" else 2
         mexc.set_leverage(lev, symbol, {'openType': m_code})
         
         bal = mexc.fetch_balance({'type': 'swap'})
-        amount_usd = float(bal['USDT']['total']) * (compound_pct / 100)
-        if amount_usd < 1.0: amount_usd = 1.0
+        amount = float(bal['USDT']['total']) * (compound_pct / 100)
         
         ticker = mexc.fetch_ticker(symbol)
-        qty = (amount_usd * lev) / ticker['last']
+        qty = (amount * lev) / ticker['last']
         
-        mexc.create_order(symbol, 'market', side, qty)
-        return f"🔥 {side.upper()} DISPARADO: {qty:.4f} {pair}"
+        order = mexc.create_order(symbol, 'market', side, qty)
+        return f"🚀 {side.upper()} EXECUTADO | QTY: {qty:.4f}"
     except Exception as e:
-        return f"❌ ERRO: {str(e)}"
+        return f"❌ ERRO API: {str(e)}"
 
-# --- 5. DASHBOARD ---
+# --- 5. INTERFACE ---
 with st.sidebar:
-    st.header("⚡ HYPER CONTROL")
+    st.header("⚙️ OMNI SETTINGS")
     asset = st.selectbox("ATIVO", ["BTC/USDT", "ETH/USDT", "SOL/USDT"])
-    leverage = st.slider("ALAVANCAGEM", 1, 125, 50)
-    compound = st.slider("COMPOUND %", 10, 100, 95)
+    leverage = st.slider("ALAVANCAGEM", 1, 100, 20)
+    compound = st.slider("COMPOUND %", 10, 100, 80)
     m_type = st.radio("MARGEM", ["Isolada", "Cruzada"])
     st.divider()
-    bot_active = st.toggle("LIGAR IA HYPER-SCALPER")
+    bot_active = st.toggle("LIGAR IA OMNI-QUANT")
 
-st.title("QUANT-OS V41 // HYPER-SCALPER (EMA 3/8)")
+st.title("QUANT-OS V42 // OMNI-ENGINE")
 
-col1, col2 = st.columns([3, 1])
+c_main, c_data = st.columns([3, 1])
 
-with col1:
+with c_main:
     st.components.v1.html(f"""
-        <div id="tv-chart" style="height:480px;"></div>
+        <div id="tv" style="height:450px;"></div>
         <script src="https://s3.tradingview.com/tv.js"></script>
-        <script>
-        new TradingView.widget({{
-          "autosize": true, "symbol": "MEXC:{asset.replace('/','')}.P",
-          "interval": "1", "theme": "dark", "style": "1", "container_id": "tv-chart"
-        }});
-        </script>
-    """, height=480)
-
-    # Monitor de Posições
+        <script>new TradingView.widget({{"autosize":true,"symbol":"MEXC:{asset.replace('/','')}.P","interval":"1","theme":"dark","style":"1","container_id":"tv"}});</script>
+    """, height=450)
+    
     @st.fragment(run_every=3)
-    def update_pos():
+    def position_table():
         try:
             sym_f = f"{asset.split('/')[0]}/USDT:USDT"
             pos = mexc.fetch_positions([sym_f])
-            active_data = [p for p in pos if float(p['contracts']) > 0]
-            if active_data:
-                st.table(pd.DataFrame(active_data)[['side', 'contracts', 'entryPrice', 'unrealizedPnl', 'percentage']])
-            else:
-                st.info("Aguardando cruzamento das EMAs 3/8...")
+            data = [p for p in pos if float(p['contracts']) > 0]
+            if data: st.dataframe(pd.DataFrame(data)[['side', 'contracts', 'entryPrice', 'unrealizedPnl', 'percentage']], use_container_width=True)
+            else: st.info("Buscando liquidez e desequilíbrio de ordens...")
         except: pass
-    update_pos()
+    position_table()
 
-with col2:
-    st.subheader("📡 LIVE FEED")
+with c_data:
+    st.subheader("🧠 IA BRAIN")
     @st.fragment(run_every=2)
-    def live_feed():
+    def brain_engine():
         sym_f = f"{asset.split('/')[0]}/USDT:USDT"
-        label, color, action, price, score = get_hyper_analysis(sym_f)
+        data = get_omni_signals(sym_f)
         
-        try:
-            bal = mexc.fetch_balance({'type': 'swap'})
-            total = bal['USDT']['total']
-        except: total = 0.0
+        if data:
+            st.markdown(f"""
+                <div class='metric-card'>
+                    <div style='color:#8b949e; font-size:12px;'>PREÇO ATUAL</div>
+                    <div style='font-size:22px; font-weight:bold;'>$ {data['price']:,.2f}</div>
+                    <hr style='border:0.1px solid #30363d;'>
+                    <div class='{data['color']}' style='font-size:18px;'>{data['label']}</div>
+                    <div style='font-size:12px; color:#00d4ff;'>SCORE: {data['score']}</div>
+                    <div style='font-size:11px; color:#8b949e;'>DIST. VWAP: {data['vwap_dist']:.3f}%</div>
+                    <div style='font-size:11px; color:#8b949e;'>FUNDING: {data['funding']:.5f}</div>
+                </div>
+            """, unsafe_allow_html=True)
 
-        st.markdown(f"""
-            <div class='metric-card'>
-                <div style='color:#8b949e; font-size:12px;'>BANCA ATUAL</div>
-                <div class='neon-gold'>$ {total:,.4f}</div>
-                <hr style='border: 0.1px solid #30363d;'>
-                <div style='color:#8b949e; font-size:12px;'>SINAL EMA 3/8</div>
-                <div class='{color}' style='font-size:20px;'>{label}</div>
-                <div style='font-size:12px; color:#58a6ff;'>SCORE: {score}/4</div>
-            </div>
-        """, unsafe_allow_html=True)
-
-        if bot_active and action:
-            pos = mexc.fetch_positions([sym_f])
-            if not any(float(p['contracts']) > 0 for p in pos):
-                res = execute_order(action, asset, leverage, compound, m_type)
-                st.session_state.v41_log = res
-                st.toast(res)
-    live_feed()
+            if bot_active and data['action']:
+                pos = mexc.fetch_positions([sym_f])
+                if not any(float(p['contracts']) > 0 for p in pos):
+                    res = execute_omni_trade(data['action'], asset, leverage, compound, m_type)
+                    st.session_state.log42 = res
+                    st.toast(res)
+    brain_engine()
 
 st.divider()
-if 'v41_log' not in st.session_state: st.session_state.v41_log = "AGUARDANDO OPORTUNIDADE"
-st.markdown(f"<div class='terminal-box'><strong>TERMINAL:</strong> {st.session_state.v41_log}</div>", unsafe_allow_html=True)
+if 'log42' not in st.session_state: st.session_state.log42 = "OMNI SYSTEM ONLINE"
+st.markdown(f"<div class='terminal-box'><strong>TERMINAL:</strong> {st.session_state.log42}</div>", unsafe_allow_html=True)
