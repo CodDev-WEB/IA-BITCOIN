@@ -2,25 +2,38 @@ import streamlit as st
 import ccxt
 import pandas as pd
 import time
+from datetime import datetime
 
-# --- 1. CONFIGURAÇÃO DE TELA ---
-st.set_page_config(page_title="TRADER-OS V36", layout="wide")
+# --- 1. CONFIGURAÇÃO DE INTERFACE PROFISSIONAL ---
+st.set_page_config(page_title="QUANT-OS V37", layout="wide", initial_sidebar_state="collapsed")
 
-# Estilo Dark Pro
 st.markdown("""
     <style>
-    .stApp { background-color: #0d1117; color: white; }
-    .status-card { 
-        background: #161b22; border: 1px solid #30363d; 
-        border-radius: 10px; padding: 15px; text-align: center; 
+    .stApp { background-color: #0d1117; color: #e6edf3; }
+    header {visibility: hidden;}
+    .metric-card {
+        background: #161b22;
+        border: 1px solid #30363d;
+        border-radius: 10px;
+        padding: 15px;
+        text-align: center;
     }
-    .neon-text { color: #58a6ff; font-weight: bold; font-family: monospace; }
+    .neon-green { color: #39ff14; font-weight: bold; }
+    .neon-red { color: #ff3131; font-weight: bold; }
+    .terminal-box {
+        background: #010409;
+        color: #39ff14;
+        padding: 10px;
+        border-radius: 5px;
+        font-family: 'Courier New', monospace;
+        font-size: 0.85rem;
+    }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. CONEXÃO SEGURA ---
+# --- 2. CONEXÃO SEGURA COM A EXCHANGE ---
 @st.cache_resource
-def get_exchange():
+def get_mexc():
     return ccxt.mexc({
         'apiKey': st.secrets.get("API_KEY", ""),
         'secret': st.secrets.get("SECRET_KEY", ""),
@@ -28,16 +41,16 @@ def get_exchange():
         'enableRateLimit': True
     })
 
-mexc = get_exchange()
+mexc = get_mexc()
 
-# --- 3. INTELIGÊNCIA DE MERCADO (CURTO PRAZO) ---
-def analyze_market(symbol):
+# --- 3. MOTOR DE INTELIGÊNCIA (ANÁLISE DE SCALPING) ---
+def get_scalper_signals(symbol):
     try:
-        # Busca dados para análise técnica
+        # Puxa 50 velas de 1 minuto
         ohlcv = mexc.fetch_ohlcv(symbol, timeframe='1m', limit=50)
         df = pd.DataFrame(ohlcv, columns=['ts', 'o', 'h', 'l', 'close', 'v'])
         
-        # Estratégia: EMA 9 + Bollinger Bands
+        # Estratégia: Médias Rápidas (EMA 9) e Bandas de Bollinger
         df['ema'] = df['close'].ewm(span=9).mean()
         df['std'] = df['close'].rolling(20).std()
         df['upper'] = df['close'].rolling(20).mean() + (df['std'] * 2)
@@ -45,91 +58,145 @@ def analyze_market(symbol):
         
         last = df.iloc[-1]
         
-        # Sinal de Scalping (Entrada rápida)
+        # Lógica de "Lucro de Pombo" (Reversão às bandas)
         if last['close'] < last['lower']:
-            return "COMPRA (LONG)", "#00ff9d", "buy", last['close']
+            return "COMPRA (LONG)", "neon-green", "buy", last['close']
         elif last['close'] > last['upper']:
-            return "VENDA (SHORT)", "#ff3366", "sell", last['close']
+            return "VENDA (SHORT)", "neon-red", "sell", last['close']
         
-        return "AGUARDANDO", "#8b949e", None, last['close']
+        return "NEUTRO", "white", None, last['close']
     except:
-        return "ERRO SYNC", "#8b949e", None, 0
+        return "SYNC...", "white", None, 0.0
 
-# --- 4. EXECUÇÃO DE ORDENS ---
-def trade_now(side, pair, lev, margin, m_type):
+# --- 4. FUNÇÕES DE NEGOCIAÇÃO ---
+def execute_trade(side, pair, lev, margin, m_type):
     try:
-        # Formata o símbolo como a MEXC quer: BTC/USDT:USDT
         symbol = f"{pair.split('/')[0]}/USDT:USDT"
         m_code = 1 if m_type == "Isolada" else 2
         
-        # Configura Alavancagem e Margem
+        # Ajuste de Alavancagem e Margem
         mexc.set_leverage(lev, symbol, {'openType': m_code})
         
         ticker = mexc.fetch_ticker(symbol)
-        amount = (margin * lev) / ticker['last']
+        qty = (margin * lev) / ticker['last']
         
-        # Ordem a Mercado
-        order = mexc.create_order(symbol, 'market', side, amount)
-        return f"✅ {side.upper()} EXECUTADO | Vol: {amount:.4f}"
+        # Envio da Ordem
+        order = mexc.create_order(symbol, 'market', side, qty)
+        return f"🔥 {side.upper()} ABERTO: {qty:.4f} {pair}"
     except Exception as e:
         return f"❌ ERRO: {str(e)}"
 
+def close_position(symbol):
+    try:
+        positions = mexc.fetch_positions([symbol])
+        for p in positions:
+            if float(p['contracts']) > 0:
+                side = 'sell' if p['side'] == 'long' else 'buy'
+                mexc.create_order(symbol, 'market', side, p['contracts'])
+        return "✅ POSIÇÃO FECHADA"
+    except Exception as e:
+        return f"❌ ERRO AO FECHAR: {str(e)}"
+
 # --- 5. INTERFACE DO USUÁRIO ---
 with st.sidebar:
-    st.header("⚡ CONTROLE")
-    asset = st.selectbox("ATIVO", ["BTC/USDT", "ETH/USDT", "SOL/USDT"])
-    leverage = st.slider("ALAVANCAGEM", 1, 50, 20)
-    margin = st.number_input("MARGEM ($)", value=10)
-    margin_type = st.radio("TIPO DE MARGEM", ["Isolada", "Cruzada"])
+    st.header("⚡ CONTROLE MASTER")
+    asset = st.selectbox("ATIVO", ["BTC/USDT", "ETH/USDT", "SOL/USDT", "PEPE/USDT"])
+    lev = st.slider("ALAVANCAGEM", 1, 100, 20)
+    mar = st.number_input("MARGEM ($)", value=10)
+    m_type = st.radio("MODO DE MARGEM", ["Isolada", "Cruzada"])
     st.divider()
-    bot_active = st.toggle("LIGAR IA EXECUTORA")
+    bot_on = st.toggle("ATIVAR IA EXECUTORA")
+    if st.button("🔴 FECHAR TUDO AGORA", use_container_width=True):
+        res = close_position(f"{asset.split('/')[0]}/USDT:USDT")
+        st.toast(res)
 
-# --- COLUNAS PRINCIPAIS ---
-col_main, col_side = st.columns([3, 1])
+# Layout Principal
+col_left, col_right = st.columns([3, 1])
 
-with col_main:
-    # GRÁFICO TRADINGVIEW (RESTAURADO)
+with col_left:
+    # GRÁFICO TRADINGVIEW (1 MINUTO)
     st.components.v1.html(f"""
-        <div id="tradingview_chart" style="height:500px;"></div>
-        <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
-        <script type="text/javascript">
+        <div id="tv-chart" style="height:450px;"></div>
+        <script src="https://s3.tradingview.com/tv.js"></script>
+        <script>
         new TradingView.widget({{
           "autosize": true, "symbol": "MEXC:{asset.replace('/', '')}.P",
-          "interval": "1", "theme": "dark", "style": "1", "locale": "br", "container_id": "tradingview_chart"
+          "interval": "1", "theme": "dark", "style": "1", "locale": "pt", "container_id": "tv-chart"
         }});
         </script>
-    """, height=500)
+    """, height=450)
 
-with col_side:
-    st.subheader("📊 STATUS IA")
-    
-    # Motor de atualização em tempo real
+    # PAINEL DE POSIÇÕES ATIVAS (EMBAIXO DO GRÁFICO)
+    st.subheader("📋 Posições Abertas")
+    @st.fragment(run_every=3)
+    def show_positions():
+        try:
+            sym_f = f"{asset.split('/')[0]}/USDT:USDT"
+            pos = mexc.fetch_positions([sym_f])
+            data = []
+            for p in pos:
+                if float(p['contracts']) > 0:
+                    data.append({
+                        "Ativo": p['symbol'],
+                        "Lado": p['side'],
+                        "Tamanho": p['contracts'],
+                        "Preço Entrada": p['entryPrice'],
+                        "PnL (ROE%)": f"{float(p['percentage']):.2f}%"
+                    })
+            if data:
+                st.table(pd.DataFrame(data))
+            else:
+                st.info("Nenhuma posição aberta no momento.")
+        except:
+            st.error("Erro ao carregar posições.")
+    show_positions()
+
+with col_right:
+    st.subheader("🤖 IA ANALYTICS")
     @st.fragment(run_every=2)
-    def update_status():
+    def monitor_ia():
         sym_f = f"{asset.split('/')[0]}/USDT:USDT"
-        label, color, side, price = analyze_market(sym_f)
+        label, style_class, action, price = get_scalper_signals(sym_f)
         
+        # Display de Status
         st.markdown(f"""
-            <div class='status-card'>
-                <div style='color: #8b949e; font-size: 12px;'>PREÇO ATUAL</div>
-                <div class='value' style='font-size: 20px;'>$ {price:,.2f}</div>
+            <div class='metric-card'>
+                <div style='color: #8b949e; font-size: 11px;'>PREÇO ATUAL</div>
+                <div style='font-size: 22px; font-weight: bold;'>$ {price:,.2f}</div>
                 <hr style='border: 0.1px solid #30363d;'>
-                <div style='color: {color}; font-weight: bold; font-size: 18px;'>{label}</div>
+                <div class='{style_class}' style='font-size: 18px;'>{label}</div>
             </div>
         """, unsafe_allow_html=True)
         
-        # Lógica de Execução
-        if bot_active and side:
-            # Proteção simples para não abrir ordens repetidas
-            if 'last_t' not in st.session_state or (time.time() - st.session_state.last_t > 60):
-                res = trade_now(side, asset, leverage, margin, margin_type)
-                st.session_state.last_t = time.time()
-                st.session_state.terminal_log = res
+        # Lógica de Trading Automático
+        if bot_on and action:
+            # Verifica se já está em posição para não duplicar
+            pos = mexc.fetch_positions([sym_f])
+            in_trade = any(float(p['contracts']) > 0 for p in pos)
+            
+            if not in_trade:
+                res = execute_trade(action, asset, lev, mar, m_type)
+                st.session_state.log_v37 = res
                 st.toast(res)
+            # Saída IA (Se o sinal mudar para o lado oposto)
+            elif in_trade:
+                current_side = 'buy' if pos[0]['side'] == 'long' else 'sell'
+                if action != current_side:
+                    close_position(sym_f)
+                    st.toast("LUCRO REALIZADO!")
 
-    update_status()
+    monitor_ia()
+    
+    # Wallet Status
+    st.divider()
+    try:
+        bal = mexc.fetch_balance({'type': 'swap'})
+        st.metric("Saldo USDT", f"$ {bal['USDT']['total']:,.2f}")
+    except:
+        st.metric("Saldo USDT", "0.00")
 
+# Terminal Log no Rodapé
 st.divider()
-st.subheader("📟 LOG DO TERMINAL")
-if 'terminal_log' not in st.session_state: st.session_state.terminal_log = "Sistema inicializado..."
-st.code(f"> {st.session_state.terminal_log}")
+st.subheader("📟 Terminal Log")
+if 'log_v37' not in st.session_state: st.session_state.log_v37 = "Sincronizado com MEXC."
+st.markdown(f"<div class='terminal-box'>> {st.session_state.log_v37}</div>", unsafe_allow_html=True)
