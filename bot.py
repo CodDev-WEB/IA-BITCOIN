@@ -35,14 +35,27 @@ class JordanEliteBot:
         except Exception as e:
             print(f"Erro de telemetria: {e}")
 
-    def apply_governance(self):
-        """Aplica protocolos de segurança de margem e alavancagem"""
+def apply_governance(self):
+        """Aplica protocolos de segurança com suporte a parâmetros exigidos pela MEXC"""
         try:
-            self.exchange.set_margin_mode('ISOLATED', self.symbol)
+            # A MEXC muitas vezes exige a alavancagem ao definir o modo de margem
+            params = {'leverage': self.leverage}
+            
+            # Tentativa de definir modo Isolado
+            self.exchange.set_margin_mode('ISOLATED', self.symbol, params)
+            
+            # Reforça a definição da alavancagem
             self.exchange.set_leverage(self.leverage, self.symbol)
+            
             self.notify(f"✅ Governança Aplicada: **Margem Isolada | {self.leverage}x**")
         except Exception as e:
-            print(f"Nota de Governança: {e}")
+            # Se já estiver configurado, a API pode retornar erro; apenas logamos
+            print(f"Nota de Governança (Configuração Atual): {e}")
+            # Tentamos apenas a alavancagem como fallback
+            try:
+                self.exchange.set_leverage(self.leverage, self.symbol)
+            except:
+                pass
 
     def get_market_data(self):
         """Camada de inteligência de dados com tratamento de nomes de colunas"""
