@@ -105,7 +105,14 @@ class JordanEliteBot:
                 time.sleep(30)
             except Exception as e:
                 print(f"Erro no monitoramento: {e}"); time.sleep(20)
-
+                
+        # No final do seu arquivo bot.py
 if __name__ == "__main__":
-    k, s, t, c = os.getenv("MEXC_API_KEY"), os.getenv("MEXC_SECRET"), os.getenv("TELEGRAM_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
-    if all([k, s, t, c]): JordanEliteBot(k, s, t, c).run_loop()
+    # O bot pega as chaves que você salvou nas variáveis do Railway
+    k = os.getenv("MEXC_API_KEY")
+    s = os.getenv("MEXC_SECRET")
+    t = os.getenv("TELEGRAM_TOKEN")
+    c = os.getenv("CHAT_ID") # Certifique-se que no Railway o nome é CHAT_ID ou TELEGRAM_CHAT_ID
+    
+    if all([k, s, t, c]):
+        JordanEliteBot(k, s, t, c).run_loop()
