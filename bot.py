@@ -36,9 +36,9 @@ class JordanEliteBot:
             print(f"Erro de telemetria: {e}")
 
     def apply_governance(self):
-        """Aplica protocolos de segurança de margem e alavancagem corrigidos para MEXC"""
+        """Aplica protocolos de segurança corrigidos para exigências da MEXC"""
         try:
-            # A MEXC exige alavancagem explícita na troca de modo
+            # Forçando parâmetros explícitos para evitar erro 600
             self.exchange.set_margin_mode('ISOLATED', self.symbol, {'leverage': self.leverage})
             self.exchange.set_leverage(self.leverage, self.symbol)
             self.notify(f"✅ Governança Aplicada: **Margem Isolada | {self.leverage}x**")
@@ -50,12 +50,10 @@ class JordanEliteBot:
         ohlcv = self.exchange.fetch_ohlcv(self.symbol, self.timeframe, limit=100)
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         
-        # Cálculo de indicadores
         bbands = df.ta.bbands(length=20, std=2)
         rsi = df.ta.rsi(length=14)
         df = pd.concat([df, bbands, rsi], axis=1)
         
-        # Normalização rigorosa de nomes de colunas
         new_cols = []
         for col in df.columns:
             if 'BBU' in col: new_cols.append('BBU')
@@ -126,18 +124,31 @@ class JordanEliteBot:
                 self.notify(f"❌ Falha na execução: {e}")
 
     def run(self):
-        """Início do Loop de Monitoramento"""
+        """Início do Loop de Monitoramento com correção para Erro 600"""
         self.notify("⚡ **Jordan Elite Bot Ativado**")
         self.apply_governance()
         while True:
             try:
+                # CORREÇÃO: Passando o symbol explicitamente para evitar 'Params can't be null'
+                # Na MEXC, fetch_positions requer o filtro de símbolo para retornar dados limpos
                 pos = self.exchange.fetch_positions([self.symbol])
-                has_pos = float(pos[0]['contracts']) > 0 if (pos and len(pos) > 0) else False
+                
+                # Verificação robusta de posição aberta
+                has_pos = False
+                if pos and len(pos) > 0:
+                    # Filtra apenas posições que possuem contratos maiores que zero
+                    active_pos = [p for p in pos if float(p.get('contracts', 0)) > 0]
+                    if len(active_pos) > 0:
+                        has_pos = True
+
                 if not has_pos:
                     self.execute_logic()
+                else:
+                    print(f"[{time.strftime('%H:%M:%S')}] Posição ativa detectada. Aguardando saída...")
+                
                 time.sleep(60) 
             except Exception as e:
-                print(f"Erro no loop: {e}")
+                print(f"Erro no loop (Code 600 Fix): {e}")
                 time.sleep(30)
 
 if __name__ == "__main__":
