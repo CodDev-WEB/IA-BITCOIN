@@ -6,108 +6,104 @@ import requests
 import os
 import sys
 
+# Força a saída de texto no log do Railway imediatamente
+sys.stdout.reconfigure(line_buffering=True)
+
 class JordanEliteBot:
     def __init__(self, api_key, secret, telegram_token, chat_id):
+        print(">>> Iniciando conexão com a MEXC...")
         self.exchange = ccxt.mexc({
             'apiKey': api_key,
             'secret': secret,
             'enableRateLimit': True,
             'options': {'defaultType': 'swap'}
         })
-        
-        # Símbolo unificado (CCXT) e Nativo (MEXC)
         self.symbol = 'BTC/USDT:USDT'
         self.mexc_symbol = 'BTC_USDT'
-        
         self.telegram_token = telegram_token
         self.chat_id = chat_id
         self.leverage = 10
 
     def notify(self, message):
+        """Tenta enviar mensagem pro Telegram"""
+        print(f">>> Notificação: {message}")
         url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"
-        payload = {"chat_id": self.chat_id, "text": f"🤖 **JORDAN ELITE**\n{message}", "parse_mode": "Markdown"}
-        try: requests.post(url, json=payload, timeout=5)
-        except: pass
+        try:
+            requests.post(url, json={"chat_id": self.chat_id, "text": f"🤖 {message}"}, timeout=5)
+        except Exception as e:
+            print(f"Erro Telegram: {e}")
 
-    def get_market_data(self):
-        # Busca dados de mercado (OHLCV)
-        ohlcv = self.exchange.fetch_ohlcv(self.symbol, '15m', limit=100)
-        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        
-        # Indicadores
-        bbands = df.ta.bbands(length=20, std=2)
-        rsi = df.ta.rsi(length=14)
-        df = pd.concat([df, bbands, rsi], axis=1)
-        
-        # Limpa nomes das colunas (Pega apenas o prefixo BBU, BBL, RSI)
-        df.columns = [c.split('_')[0] if any(x in c for x in ['BBU', 'BBL', 'RSI']) else c for c in df.columns]
-        return df
+    def get_data(self):
+        """Busca dados e calcula indicadores"""
+        try:
+            ohlcv = self.exchange.fetch_ohlcv(self.symbol, '15m', limit=50)
+            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            
+            # Cálculo de Bandas e RSI
+            df.ta.bbands(length=20, std=2, append=True)
+            df.ta.rsi(length=14, append=True)
+            
+            # Limpeza de nomes (Pega BBU, BBL, RSI)
+            df.columns = [c.split('_')[0] if any(x in c for x in ['BBU', 'BBL', 'RSI']) else c for c in df.columns]
+            return df
+        except Exception as e:
+            print(f"Erro ao buscar dados: {e}")
+            return None
 
-    def run(self):
-        self.notify("⚡ **Bot Iniciado**\nMonitorando BTC_USDT na MEXC.")
+    def run_loop(self):
+        self.notify("JORDAN ELITE BOT ONLINE")
+        print(">>> Loop de monitoramento iniciado.")
         
         while True:
             try:
-                # SOLUÇÃO DEFINITIVA ERRO 600:
-                # Chamamos o endpoint de posições passando o símbolo nativo diretamente nos parâmetros
-                # Isso impede que o parâmetro 'symbol' vá nulo para a MEXC
-                positions = self.exchange.fetch_positions(params={'symbol': self.mexc_symbol})
+                # 1. Verifica Posição (Anti-Erro 600)
+                pos = self.exchange.fetch_positions(params={'symbol': self.mexc_symbol})
+                has_pos = any(float(p.get('contracts', 0)) > 0 for p in pos) if pos else False
                 
-                has_pos = False
-                if positions:
-                    # Filtra apenas posições que realmente têm contratos abertos
-                    active = [p for p in positions if float(p.get('contracts', 0)) > 0]
-                    if active:
-                        has_pos = True
-
                 if not has_pos:
-                    df = self.get_market_data()
-                    last, prev = df.iloc[-1], df.iloc[-2]
-                    price = self.exchange.fetch_ticker(self.symbol)['last']
-
-                    # Estratégia de entrada
-                    if (prev['close'] > prev['BBU']) and (last['RSI'] < 70):
-                        self.execute_trade('buy', price)
-                    elif (prev['close'] < prev['BBL']) and (last['RSI'] > 30):
-                        self.execute_trade('sell', price)
+                    df = self.get_data()
+                    if df is not None:
+                        last = df.iloc[-1]
+                        prev = df.iloc[-2]
+                        price = self.exchange.fetch_ticker(self.symbol)['last']
+                        
+                        # Lógica Simplificada
+                        if (prev['close'] > prev['BBU']) and (last['RSI'] < 70):
+                            self.execute('buy', price)
+                        elif (prev['close'] < prev['BBL']) and (last['RSI'] > 30):
+                            self.execute('sell', price)
                 
-                # Aguarda 60 segundos para a próxima verificação
+                print(f"[{time.strftime('%H:%M:%S')}] Monitorando...")
                 time.sleep(60)
-                
             except Exception as e:
-                print(f"Erro no monitoramento: {e}")
+                print(f"Erro no loop: {e}")
                 time.sleep(30)
 
-    def execute_trade(self, side, price):
-        """Execução com injeção de parâmetros nativos"""
+    def execute(self, side, price):
         try:
             balance = self.exchange.fetch_balance()
             available = float(balance.get('USDT', {}).get('free', 0))
-            if available == 0:
-                available = float(balance.get('total', {}).get('USDT', 0))
-            
-            # Cálculo de lote (1% de risco com 10x alavancagem)
             lot = (available * 0.01 * self.leverage) / price
-
+            
             if lot > 0:
-                # Envia ordem injetando o símbolo nativo no params
                 self.exchange.create_order(
-                    symbol=self.symbol,
-                    type='market',
-                    side=side,
-                    amount=lot,
+                    symbol=self.symbol, type='market', side=side, amount=lot,
                     params={'symbol': self.mexc_symbol}
                 )
-                self.notify(f"🚀 **ORDEM EXECUTADA**\n🔹 {side.upper()} BTC\n🔹 Preço: {price}")
+                self.notify(f"ORDEM EXECUTADA: {side.upper()} BTC")
         except Exception as e:
-            self.notify(f"❌ Falha na execução: {e}")
+            print(f"Erro execução: {e}")
 
 if __name__ == "__main__":
-    # Carrega variáveis do Railway
-    bot = JordanEliteBot(
-        os.getenv("MEXC_API_KEY"),
-        os.getenv("MEXC_SECRET"),
-        os.getenv("TELEGRAM_TOKEN"),
-        os.getenv("TELEGRAM_CHAT_ID")
-    )
-    bot.run()
+    print("--- INICIANDO CONTAINER ---")
+    k = os.getenv("MEXC_API_KEY")
+    s = os.getenv("MEXC_SECRET")
+    t = os.getenv("TELEGRAM_TOKEN")
+    c = os.getenv("TELEGRAM_CHAT_ID")
+    
+    if not all([k, s, t, c]):
+        print("ERRO: Faltam variáveis no Railway!")
+        sys.exit(1)
+        
+    bot = JordanEliteBot(k, s, t, c)
+    bot.run_loop()
