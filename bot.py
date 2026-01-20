@@ -8,45 +8,48 @@ import sys
 
 class JordanEliteBot:
     def __init__(self, api_key, secret, telegram_token, chat_id):
-        # 1. Conexão com a Exchange
+        # 1. Configuração da Exchange
         self.exchange = ccxt.mexc({
             'apiKey': api_key,
             'secret': secret,
             'enableRateLimit': True,
-            'options': {'defaultType': 'swap'}
+            'options': {'defaultType': 'swap'} 
         })
         
-        # 2. Configurações de Governança
-        self.symbol = 'BTC/USDT:USDT'
+        # 2. DEFINIÇÃO DO PAR (Símbolo Nativo MEXC para Futuros)
+        # O CCXT traduz BTC/USDT:USDT para o formato que a API precisa, 
+        # mas forçaremos o mapeamento para evitar falhas de parâmetro.
+        self.symbol = 'BTC/USDT:USDT' 
+        self.mexc_native_symbol = 'BTC_USDT' # Usado em parâmetros específicos
+        
         self.timeframe = '15m'
         self.leverage = 10           
         self.risk_per_trade = 0.01   
         
-        # 3. Credenciais de Telemetria
+        # 3. Telemetria
         self.telegram_token = telegram_token
         self.chat_id = chat_id
 
     def notify(self, message):
-        """Protocolo de comunicação remota via Telegram"""
         url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"
         payload = {"chat_id": self.chat_id, "text": f"🤖 **JORDAN ELITE BOT**\n{message}", "parse_mode": "Markdown"}
         try:
             requests.post(url, json=payload, timeout=10)
-        except Exception as e:
-            print(f"Erro de telemetria: {e}")
+        except:
+            pass
 
     def apply_governance(self):
-        """Aplica protocolos de segurança corrigidos para exigências da MEXC"""
+        """Aplica governança usando o mapeamento de símbolo explícito"""
         try:
-            # Forçando parâmetros explícitos para evitar erro 600
+            # Passamos o símbolo e a alavancagem de forma redundante
             self.exchange.set_margin_mode('ISOLATED', self.symbol, {'leverage': self.leverage})
             self.exchange.set_leverage(self.leverage, self.symbol)
-            self.notify(f"✅ Governança Aplicada: **Margem Isolada | {self.leverage}x**")
+            self.notify(f"✅ Governança Ativa: **{self.symbol} | {self.leverage}x**")
         except Exception as e:
-            print(f"Nota de Governança: {e}")
+            print(f"Aviso de Governança: {e}")
 
     def get_market_data(self):
-        """Camada de inteligência de dados com normalização de colunas"""
+        """Coleta dados e normaliza colunas"""
         ohlcv = self.exchange.fetch_ohlcv(self.symbol, self.timeframe, limit=100)
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         
@@ -64,99 +67,89 @@ class JordanEliteBot:
         return df
 
     def calculate_position_size(self, price, stop_loss):
-        """Cálculo de Lote Dinâmico - Gestão de Risco"""
         try:
             balance = self.exchange.fetch_balance()
-            # Ajuste para buscar o saldo na estrutura correta da MEXC v3
-            available = float(balance['USDT']['free']) if 'USDT' in balance else 0
+            # No Railway/MEXC v3, o saldo costuma estar em 'total' ou 'free'
+            available = float(balance.get('USDT', {}).get('free', 0))
+            if available == 0:
+                # Fallback para estrutura alternativa de saldo
+                available = float(balance.get('total', {}).get('USDT', 0))
             
             risk_amount = available * self.risk_per_trade
-            price_variation = abs(price - stop_loss)
-            if price_variation == 0: return 0
-            size = risk_amount / price_variation
-            max_allowed = (available * self.leverage * 0.9) / price
-            return min(size, max_allowed)
-        except Exception as e:
-            print(f"Erro no cálculo de lote: {e}")
+            price_var = abs(price - stop_loss)
+            if price_var == 0: return 0
+            size = risk_amount / price_var
+            return min(size, (available * self.leverage * 0.9) / price)
+        except:
             return 0
 
-    def check_liquidity(self, side, amount):
-        """Verifica se há liquidez no Orderbook"""
-        try:
-            ob = self.exchange.fetch_order_book(self.symbol, limit=5)
-            levels = ob['asks'] if side == 'buy' else ob['bids']
-            total_vol = sum([level[1] for level in levels])
-            return total_vol >= (amount * 2)
-        except:
-            return False
-
     def execute_logic(self):
-        """Motor de decisão principal"""
         try:
             df = self.get_market_data()
-            last = df.iloc[-1]
-            prev = df.iloc[-2]
-            current_price = self.exchange.fetch_ticker(self.symbol)['last']
+            last, prev = df.iloc[-1], df.iloc[-2]
+            price = self.exchange.fetch_ticker(self.symbol)['last']
 
-            long_cond = (prev['close'] > prev['BBU']) and (last['RSI'] < 70)
-            short_cond = (prev['close'] < prev['BBL']) and (last['RSI'] > 30)
-
-            if long_cond:
-                self.open_position('buy', current_price)
-            elif short_cond:
-                self.open_position('sell', current_price)
+            if (prev['close'] > prev['BBU']) and (last['RSI'] < 70):
+                self.open_position('buy', price)
+            elif (prev['close'] < prev['BBL']) and (last['RSI'] > 30):
+                self.open_position('sell', price)
         except Exception as e:
             print(f"Erro na lógica: {e}")
 
     def open_position(self, side, price):
-        """Execução de Ordem Market com SL e TP"""
         sl_pct = 0.015
         sl = price * (1 - sl_pct) if side == 'buy' else price * (1 + sl_pct)
         tp = price * (1 + sl_pct * 2) if side == 'buy' else price * (1 - sl_pct * 2)
         lot = self.calculate_position_size(price, sl)
         
-        if lot > 0 and self.check_liquidity(side, lot):
+        if lot > 0:
             try:
+                # Criando a ordem com parâmetros explícitos de símbolo para a MEXC
                 self.exchange.create_order(
-                    symbol=self.symbol, type='market', side=side, amount=lot,
-                    params={'stopLossPrice': sl, 'takeProfitPrice': tp}
+                    symbol=self.symbol, 
+                    type='market', 
+                    side=side, 
+                    amount=lot,
+                    params={
+                        'stopLossPrice': sl, 
+                        'takeProfitPrice': tp,
+                        'symbol': self.mexc_native_symbol # Injeção forçada do símbolo nativo
+                    }
                 )
                 self.notify(f"🚀 **ORDEM EXECUTADA**\n🔹 {side.upper()} BTC\n🔹 Lote: {lot:.4f}")
             except Exception as e:
-                self.notify(f"❌ Falha na execução: {e}")
+                self.notify(f"❌ Erro ao abrir: {e}")
 
     def run(self):
-        """Início do Loop com correção explícita para o Erro 600"""
         self.notify("⚡ **Jordan Elite Bot Ativado**")
         self.apply_governance()
         while True:
             try:
-                # CORREÇÃO CHAVE: Passando o symbol como parâmetro obrigatório e único
-                pos = self.exchange.fetch_positions(symbols=[self.symbol])
+                # O PONTO CRÍTICO: Usamos fetch_positions com o símbolo exato esperado
+                # Algumas versões da API da MEXC exigem o par sem o ":USDT"
+                pos = self.exchange.fetch_positions(params={'symbol': self.mexc_native_symbol})
                 
                 has_pos = False
                 if pos:
-                    # Filtramos apenas posições com contratos ativos (> 0)
-                    active_pos = [p for p in pos if float(p.get('contracts', 0)) > 0]
-                    if active_pos:
-                        has_pos = True
+                    for p in pos:
+                        if p['symbol'] == self.symbol or p['symbol'] == self.mexc_native_symbol:
+                            if float(p.get('contracts', 0)) > 0:
+                                has_pos = True
+                                break
 
                 if not has_pos:
                     self.execute_logic()
-                else:
-                    print(f"[{time.strftime('%H:%M:%S')}] Posição ativa detectada. Monitorando...")
                 
                 time.sleep(60) 
             except Exception as e:
-                print(f"Erro no loop (Code 600 Fix): {e}")
+                print(f"Erro de Conexão/Parâmetro: {e}")
                 time.sleep(30)
 
 if __name__ == "__main__":
-    key = os.getenv("MEXC_API_KEY")
-    sec = os.getenv("MEXC_SECRET")
-    tok = os.getenv("TELEGRAM_TOKEN")
-    cid = os.getenv("TELEGRAM_CHAT_ID")
-    if not all([key, sec, tok, cid]):
-        sys.exit(1)
-    bot = JordanEliteBot(key, sec, tok, cid)
+    bot = JordanEliteBot(
+        os.getenv("MEXC_API_KEY"),
+        os.getenv("MEXC_SECRET"),
+        os.getenv("TELEGRAM_TOKEN"),
+        os.getenv("TELEGRAM_CHAT_ID")
+    )
     bot.run()
