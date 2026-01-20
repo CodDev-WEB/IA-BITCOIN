@@ -19,7 +19,7 @@ class JordanEliteBot:
         # 2. DEFINIÇÃO DO PAR (Símbolo Nativo MEXC para Futuros)
         # O CCXT traduz BTC/USDT:USDT para o formato que a API precisa, 
         # mas forçaremos o mapeamento para evitar falhas de parâmetro.
-        self.symbol = 'BTC/USDT:USDT' 
+        self.symbol = 'BTC_USDT' 
         self.mexc_native_symbol = 'BTC_USDT' # Usado em parâmetros específicos
         
         self.timeframe = '15m'
