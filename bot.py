@@ -10,97 +10,101 @@ sys.stdout.reconfigure(line_buffering=True)
 
 class JordanEliteBot:
     def __init__(self, api_key, secret, telegram_token, chat_id):
-        print(">>> Conectando Sistema Multi-Métricas V2...")
+        print(">>> Iniciando Sistema Multi-Métricas V2...")
         self.exchange = ccxt.mexc({
             'apiKey': api_key,
             'secret': secret,
             'enableRateLimit': True,
             'options': {'defaultType': 'swap'}
         })
-        self.symbol = 'BTC/USDT:USDT'
-        self.mexc_symbol = 'BTC_USDT'
-        self.timeframe = '5m'
-        self.telegram_token = telegram_token
-        self.chat_id = chat_id
+        self.symbol, self.mexc_symbol = 'BTC/USDT:USDT', 'BTC_USDT'
+        self.telegram_token, self.chat_id = telegram_token, chat_id
         self.leverage = 10 
 
     def notify(self, message):
         url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"
         try:
             res = requests.post(url, json={"chat_id": self.chat_id, "text": f"🤖 {message}"}, timeout=10)
-            if res.status_code != 200:
-                print(f"❌ Erro Telegram: {res.text}")
-        except Exception as e:
-            print(f"❌ Falha de conexão Telegram: {e}")
+            if res.status_code != 200: print(f"❌ Erro Telegram: {res.text}")
+        except: print("❌ Falha de conexão Telegram.")
 
     def get_data(self):
         try:
-            ohlcv = self.exchange.fetch_ohlcv(self.symbol, self.timeframe, limit=100)
+            ohlcv = self.exchange.fetch_ohlcv(self.symbol, '5m', limit=100)
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             
-            # Indicadores sem renomear para evitar erro de ambiguidade
+            # Adicionando Indicadores
             df.ta.bbands(length=20, std=2, append=True)
             df.ta.rsi(length=14, append=True)
             df.ta.ema(length=9, append=True)
             df.ta.ema(length=21, append=True)
             df['vol_avg'] = df['volume'].rolling(window=20).mean()
             
-            # Limpeza manual e segura das colunas
-            df.columns = [c.replace('BBU_20_2.0', 'BBU').replace('BBL_20_2.0', 'BBL').replace('RSI_14', 'RSI') for c in df.columns]
-            return df
+            # MAPEAMENTO SEGURO DE COLUNAS (Resolve o erro 'BBU' e KeyError)
+            # Procuramos as colunas que contenham o nome, independente dos sufixos da biblioteca
+            cols = {
+                'BBU': [c for c in df.columns if 'BBU' in c][0],
+                'BBL': [c for c in df.columns if 'BBL' in c][0],
+                'RSI': [c for c in df.columns if 'RSI' in c][0],
+                'EMA9': [c for c in df.columns if 'EMA_9' in c][0],
+                'EMA21': [c for c in df.columns if 'EMA_21' in c][0]
+            }
+            return df, cols
         except Exception as e:
-            print(f"Erro ao processar métricas: {e}")
-            return None
+            print(f"Erro no processamento de dados: {e}")
+            return None, None
 
     def execute(self, side, price):
         try:
             balance = self.exchange.fetch_balance()
             available = float(balance.get('USDT', {}).get('free', 0)) or float(balance.get('total', {}).get('USDT', 0))
             
-            lot = (available * 0.50 * self.leverage) / price # 50% de banca
-            tp = price * 1.015 if side == 'buy' else price * 0.985 # Alvo 15% (1.5% no preço)
+            # 50% da banca com 10x alavancagem
+            lot = (available * 0.50 * self.leverage) / price
+            # Alvo de 15% de lucro (1.5% no preço)
+            tp = price * 1.015 if side == 'buy' else price * 0.985
 
             if lot > 0:
                 self.exchange.create_order(
                     symbol=self.symbol, type='market', side=side, amount=lot,
                     params={'symbol': self.mexc_symbol, 'takeProfitPrice': tp}
                 )
-                self.notify(f"🚀 ENTRADA CONFIRMADA: {side.upper()}\n📈 Preço: {price}\n🎯 Alvo 15% Lucro: {tp:.2f}")
+                self.notify(f"🚀 ENTRADA FORTE: {side.upper()}\n📈 Preço: {price}\n🎯 Alvo Lucro: {tp:.2f}")
         except Exception as e:
-            print(f"Erro na ordem: {e}")
+            print(f"Erro na execução: {e}")
 
     def run_loop(self):
         self.notify("SISTEMA MULTI-MÉTRICAS ONLINE 🚀")
-        print(">>> Monitorando confluências de mercado...")
         while True:
             try:
+                # Anti-Erro 600 na MEXC
                 pos = self.exchange.fetch_positions(params={'symbol': self.mexc_symbol})
                 has_pos = any(float(p.get('contracts', 0)) > 0 for p in pos) if pos else False
                 
                 if not has_pos:
-                    df = self.get_data()
+                    df, c = self.get_data()
                     if df is not None:
-                        last = df.iloc[-1]
-                        prev = df.iloc[-2]
+                        last, prev = df.iloc[-1], df.iloc[-2]
                         price = self.exchange.fetch_ticker(self.symbol)['last']
                         
-                        # LOGICA DE CONFLUÊNCIA CORRIGIDA (EMA_9 vs EMA_21)
-                        # Compra: Preço acima das médias + Cruzamento de médias + Rompimento Banda + RSI ideal + Volume
-                        buy_signal = (last['close'] > last['EMA_9']) and (last['EMA_9'] > last['EMA_21']) and \
-                                     (prev['close'] > prev['BBU']) and (50 < last['RSI'] < 70) and \
-                                     (last['volume'] > last['vol_avg'])
+                        # LÓGICA DE CONFLUÊNCIA (EMA + BB + RSI + VOLUME)
+                        # Compra: Preço > EMA9 > EMA21 E rompimento de Banda E RSI entre 50-70 E Volume acima da média
+                        buy = (last['close'] > last[c['EMA9']]) and (last[c['EMA9']] > last[c['EMA21']]) and \
+                              (prev['close'] > prev[c['BBU']]) and (50 < last[c['RSI']] < 70) and \
+                              (last['volume'] > last['vol_avg'])
 
-                        # Venda: Preço abaixo das médias + Médias invertidas + Rompimento Banda + RSI fraco + Volume
-                        sell_signal = (last['close'] < last['EMA_9']) and (last['EMA_9'] < last['EMA_21']) and \
-                                      (prev['close'] < prev['BBL']) and (30 < last['RSI'] < 50) and \
-                                      (last['volume'] > last['vol_avg'])
+                        # Venda: Preço < EMA9 < EMA21 E rompimento de Banda E RSI entre 30-50 E Volume acima da média
+                        sell = (last['close'] < last[c['EMA9']]) and (last[c['EMA9']] < last[c['EMA21']]) and \
+                               (prev['close'] < prev[c['BBL']]) and (30 < last[c['RSI']] < 50) and \
+                               (last['volume'] > last['vol_avg'])
 
-                        if buy_signal: self.execute('buy', price)
-                        elif sell_signal: self.execute('sell', price)
+                        if buy: self.execute('buy', price)
+                        elif sell: self.execute('sell', price)
                 
+                print(f"[{time.strftime('%H:%M:%S')}] Analisando confluências de 5m...")
                 time.sleep(30)
             except Exception as e:
-                print(f"Erro no loop: {e}"); time.sleep(20)
+                print(f"Erro no monitoramento: {e}"); time.sleep(20)
 
 if __name__ == "__main__":
     k, s, t, c = os.getenv("MEXC_API_KEY"), os.getenv("MEXC_SECRET"), os.getenv("TELEGRAM_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
