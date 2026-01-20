@@ -74,11 +74,11 @@ def get_market_analysis(symbol):
         score = 0
         
         # LÓGICA DE CONFLUÊNCIA (PRECISÃO PROFISSIONAL)
-        if last['ema9'] > last['ema21']: score += 1
+        if last['ema3'] > last['ema8']: score += 1
         if last['close'] < last['lw']: score += 2
         if last['rsi'] < 40: score += 1
         
-        if last['ema9'] < last['ema21']: score -= 1
+        if last['ema3'] < last['ema8']: score -= 1
         if last['close'] > last['up']: score -= 2
         if last['rsi'] > 60: score -= 1
         
