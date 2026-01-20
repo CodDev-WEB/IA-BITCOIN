@@ -15,7 +15,7 @@ class JordanEliteBot:
             'options': {'defaultType': 'swap'}
         })
         
-        # Símbolos definidos para evitar conflito de nomenclatura
+        # Sincronização de Símbolos
         self.symbol = 'BTC/USDT:USDT' 
         self.mexc_symbol = 'BTC_USDT' 
         
@@ -31,63 +31,66 @@ class JordanEliteBot:
         except: pass
 
     def apply_governance(self):
-        """Define margem e alavancagem com injeção direta de símbolo"""
+        """Correção Crítica: Passando leverage como parâmetro nomeado para a MEXC"""
         try:
-            # Forçamos o símbolo nativo no dicionário de parâmetros
-            self.exchange.set_margin_mode('ISOLATED', self.symbol, {'symbol': self.mexc_symbol})
+            # A MEXC v3 exige o parâmetro 'leverage' dentro de um dicionário extra
+            self.exchange.set_margin_mode('ISOLATED', self.symbol, {
+                'leverage': self.leverage,
+                'symbol': self.mexc_symbol
+            })
+            # Reforça a alavancagem separadamente por segurança
             self.exchange.set_leverage(self.leverage, self.symbol, {'symbol': self.mexc_symbol})
             self.notify(f"✅ Governança MEXC Ativa: **{self.mexc_symbol} | {self.leverage}x**")
         except Exception as e:
-            print(f"Status de Governança: {e}")
+            print(f"Nota de Governança: {e}")
+            # Se já estiver configurado, o bot segue em frente
 
     def get_market_data(self):
-        """Coleta dados para análise"""
         ohlcv = self.exchange.fetch_ohlcv(self.symbol, '15m', limit=100)
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        
+        # Análise Técnica
         bbands = df.ta.bbands(length=20, std=2)
         rsi = df.ta.rsi(length=14)
         df = pd.concat([df, bbands, rsi], axis=1)
+        
+        # Limpeza de nomes de colunas
         df.columns = [c.split('_')[0] if any(x in c for x in ['BBU', 'BBL', 'RSI']) else c for c in df.columns]
         return df
 
     def open_position(self, side, price):
-        """EXECUÇÃO REAL: Abre a ordem na MEXC"""
+        """Execução direta no servidor da MEXC"""
         sl = price * 0.985 if side == 'buy' else price * 1.015
         tp = price * 1.03 if side == 'buy' else price * 0.97
         
-        # Leitura de saldo para cálculo de lote
-        balance = self.exchange.fetch_balance()
-        available = float(balance.get('USDT', {}).get('free', 0))
-        
-        # Cálculo de quantidade (Lote)
-        lot = (available * self.risk_per_trade * self.leverage) / price
+        try:
+            balance = self.exchange.fetch_balance()
+            available = float(balance.get('USDT', {}).get('free', 0))
+            lot = (available * self.risk_per_trade * self.leverage) / price
 
-        if lot > 0:
-            try:
-                # O PONTO DE EXECUÇÃO: Injetamos o símbolo nativo aqui
+            if lot > 0:
                 self.exchange.create_order(
                     symbol=self.symbol,
                     type='market',
                     side=side,
                     amount=lot,
                     params={
-                        'symbol': self.mexc_symbol, # GARANTE QUE A API ENTENDA O PAR
+                        'symbol': self.mexc_symbol,
                         'stopLossPrice': sl,
                         'takeProfitPrice': tp
                     }
                 )
                 self.notify(f"🚀 **ORDEM EXECUTADA**\n🔹 {side.upper()} {self.mexc_symbol}\n🔹 Lote: {lot:.4f}")
-            except Exception as e:
-                self.notify(f"❌ Erro na execução: {e}")
+        except Exception as e:
+            self.notify(f"❌ Erro na execução: {e}")
 
     def run(self):
-        self.notify("⚡ **Sistema de Execução Direta Iniciado**")
+        self.notify("⚡ **Sistema Iniciado: Modo de Alta Compatibilidade**")
         self.apply_governance()
         while True:
             try:
-                # Verificação de posição com parâmetro nativo
-                params = {'symbol': self.mexc_symbol}
-                positions = self.exchange.fetch_positions(params=params)
+                # Verificação de posição com parâmetro nativo para evitar Erro 600
+                positions = self.exchange.fetch_positions(params={'symbol': self.mexc_symbol})
                 
                 has_pos = False
                 if positions:
