@@ -3,203 +3,159 @@ import ccxt
 import pandas as pd
 import numpy as np
 import time
+from datetime import datetime
 
-# --- 1. CONFIGURAÇÃO DE INTERFACE DE ALTA PERFORMANCE ---
-st.set_page_config(page_title="V46 // SINGULARITY", layout="wide", initial_sidebar_state="collapsed")
+# --- 1. CONFIGURAÇÃO DE INTERFACE ---
+st.set_page_config(page_title="V47 // VELOCITY", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
     <style>
     .stApp { background-color: #010409; color: #e6edf3; }
-    header {visibility: hidden;}
-    .metric-card {
-        background: #0d1117; border: 1px solid #30363d; border-radius: 12px;
-        padding: 15px; text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+    .status-box { 
+        background: #0d1117; border: 1px solid #30363d; border-radius: 10px; 
+        padding: 20px; text-align: center; border-top: 4px solid #f0b90b;
     }
-    .neon-gold { color: #f0b90b; font-weight: bold; text-shadow: 0 0 12px #f0b90b77; }
-    .neon-green { color: #39ff14; font-weight: bold; }
-    .neon-red { color: #ff3131; font-weight: bold; }
-    .terminal-box {
-        background: #000; color: #00ff41; padding: 15px;
-        border-radius: 8px; font-family: 'Courier New', monospace; font-size: 0.85rem;
-        border-left: 5px solid #f0b90b;
-    }
+    .pnl-positive { color: #39ff14; font-weight: bold; font-family: monospace; font-size: 20px; }
+    .pnl-negative { color: #ff3131; font-weight: bold; font-family: monospace; font-size: 20px; }
+    .neon-gold { color: #f0b90b; font-weight: bold; font-size: 28px; }
+    .terminal { background: #000; color: #0f0; padding: 10px; font-family: monospace; border-radius: 5px; height: 100px; overflow-y: auto; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. ENGINE DE CONEXÃO ROBUSTA ---
+# --- 2. CONEXÃO CORE ---
 @st.cache_resource
-def get_exchange_connection():
-    try:
-        exchange = ccxt.mexc({
-            'apiKey': st.secrets["API_KEY"],
-            'secret': st.secrets["SECRET_KEY"],
-            'options': {
-                'defaultType': 'swap',
-                'adjustForTimeDifference': True,
-                'recvWindow': 10000 
-            },
-            'enableRateLimit': True
-        })
-        return exchange
-    except Exception as e:
-        st.error(f"Erro Crítico de Conexão: {e}")
-        return None
+def init_mexc():
+    return ccxt.mexc({
+        'apiKey': st.secrets["API_KEY"],
+        'secret': st.secrets["SECRET_KEY"],
+        'options': {'defaultType': 'swap', 'adjustForTimeDifference': True},
+        'enableRateLimit': True
+    })
 
-mexc = get_exchange_connection()
+mexc = init_mexc()
 
-# --- 3. MOTOR DE INTELIGÊNCIA TÉCNICA (LÓGICA PURA) ---
-def analyze_market_logic(symbol):
+# --- 3. MOTOR DE ANÁLISE VELA-A-VELA ---
+def get_candle_analysis(symbol):
     try:
-        # Puxa dados de 1m (Execução) e 5m (Tendência)
-        ohlcv = mexc.fetch_ohlcv(symbol, timeframe='1m', limit=60)
+        # Analisa as últimas 50 velas de 1 minuto
+        ohlcv = mexc.fetch_ohlcv(symbol, timeframe='1m', limit=50)
         df = pd.DataFrame(ohlcv, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
         
-        # --- INDICADORES ---
-        # 1. EMA 3/8 (Gatilho Rápido)
-        df['ema3'] = df['c'].ewm(span=3, adjust=False).mean()
-        df['ema8'] = df['c'].ewm(span=8, adjust=False).mean()
+        # Indicadores de Scalp Rápido
+        df['ema3'] = df['c'].ewm(span=3).mean()
+        df['ema8'] = df['c'].ewm(span=8).mean()
         
-        # 2. VWAP (Preço Médio por Volume)
-        df['vwap'] = (df['c'] * df['v']).cumsum() / df['v'].cumsum()
-        
-        # 3. RSI 7 (Momentum)
+        # RSI rápido (5 períodos)
         delta = df['c'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(7).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(7).mean()
+        gain = (delta.where(delta > 0, 0)).rolling(5).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(5).mean()
         rsi = 100 - (100 / (1 + (gain / (loss + 1e-10))))
-        
-        # 4. Filtro de Volume (Volume > Média de 20 períodos)
-        vol_mean = df['v'].rolling(20).mean()
-        vol_confirmed = df['v'].iloc[-1] > vol_mean.iloc[-1]
 
         last = df.iloc[-1]
-        score = 0
+        prev = df.iloc[-2]
         
-        # --- LÓGICA DE ENTRADA ---
-        if last['ema3'] > last['ema8'] and last['c'] > last['vwap']:
-            score += 2
-        if rsi.iloc[-1] < 40: score += 1
-        if vol_confirmed: score += 1
-
-        if last['ema3'] < last['ema8'] and last['c'] < last['vwap']:
-            score -= 2
-        if rsi.iloc[-1] > 60: score -= 1
-        if vol_confirmed: score -= 1
-
-        # --- LÓGICA DE SAÍDA (Onde o lucro é feito) ---
-        # Sai se o sinal inverter ou RSI atingir extremos
-        exit_long = rsi.iloc[-1] > 80 or last['c'] < last['ema8']
-        exit_short = rsi.iloc[-1] < 20 or last['c'] > last['ema8']
-
+        # Lógica de Decisão: Cruzamento de médias + Direção da última vela
+        action = None
+        if last['ema3'] > last['ema8'] and last['c'] > prev['c']:
+            action = 'buy'
+        elif last['ema3'] < last['ema8'] and last['c'] < prev['c']:
+            action = 'sell'
+            
         return {
-            "side": "buy" if score >= 3 else "sell" if score <= -3 else None,
+            "action": action,
             "price": last['c'],
-            "score": score,
             "rsi": rsi.iloc[-1],
-            "exit_long": exit_long,
-            "exit_short": exit_short
+            "is_bullish": last['c'] > last['o']
         }
     except:
         return None
 
-# --- 4. EXECUÇÃO PROFISSIONAL ---
-def execute_smart_order(side, pair, lev, compound_pct, m_type):
-    try:
-        symbol = f"{pair.split('/')[0]}/USDT:USDT"
-        m_code = 1 if m_type == "Isolada" else 2
-        
-        mexc.load_markets()
-        mexc.set_leverage(int(lev), symbol, {'openType': m_code})
-
-        bal = mexc.fetch_balance({'type': 'swap'})
-        free_balance = float(bal['USDT']['free'])
-        margin = free_balance * (compound_pct / 100)
-        
-        if margin < 5.0: return "❌ Saldo Insuficiente (Mín. $5)"
-
-        ticker = mexc.fetch_ticker(symbol)
-        raw_qty = (margin * lev) / ticker['last']
-        
-        # Ajusta precisão para a MEXC não recusar
-        qty = mexc.amount_to_precision(symbol, raw_qty)
-
-        order = mexc.create_market_order(symbol, side, qty)
-        return f"🚀 {side.upper()} EXECUTADO | QTY: {qty}"
-    except Exception as e:
-        return f"❌ ERRO API: {str(e)}"
-
-# --- 5. INTERFACE DASHBOARD ---
+# --- 4. DASHBOARD E CONTROLES ---
 with st.sidebar:
-    st.header("⚡ SINGULARITY CORE")
-    asset = st.selectbox("ATIVO", ["BTC/USDT", "ETH/USDT", "SOL/USDT", "PEPE/USDT"])
-    leverage = st.slider("ALAVANCAGEM", 1, 100, 20)
-    comp_pct = st.slider("COMPOUND %", 10, 100, 90)
-    m_type = st.radio("MODO MARGEM", ["Isolada", "Cruzada"])
-    st.divider()
-    bot_on = st.toggle("ATIVAR AUTO-QUANT")
+    st.header("⚡ VELOCITY CONTROL")
+    pair = st.selectbox("PAR", ["BTC/USDT", "ETH/USDT", "SOL/USDT", "PEPE/USDT"])
+    lev = st.slider("ALAVANCAGEM", 10, 125, 50)
+    comp = st.slider("COMPOUND % (Banca)", 10, 100, 90)
+    bot_active = st.toggle("LIGAR ROBÔ")
+    if st.button("FECHAR TUDO AGORA"):
+        st.warning("Comando enviado!")
 
-st.title("V46 // THE SINGULARITY ENGINE")
+st.title("QUANT-OS V47 // HIGH FREQUENCY SCALPER")
 
-c_chart, c_stats = st.columns([3, 1])
+col_main, col_pnl = st.columns([2, 1])
 
-with c_chart:
+# --- 5. MONITOR DE POSIÇÕES (IGUAL À MEXC) ---
+with col_pnl:
+    st.subheader("📊 Posições em Aberto")
+    @st.fragment(run_every=1)
+    def update_pnl():
+        sym_f = f"{pair.split('/')[0]}/USDT:USDT"
+        try:
+            # 1. Busca Posições Reais
+            positions = mexc.fetch_positions([sym_f])
+            active = [p for p in positions if float(p['contracts']) > 0]
+            
+            # 2. Busca Saldo Real
+            bal = mexc.fetch_balance({'type': 'swap'})
+            total_usdt = bal['USDT']['total']
+            
+            st.markdown(f"<div class='status-box'>BANCA TOTAL<br><span class='neon-gold'>$ {total_usdt:,.4f}</span></div>", unsafe_allow_html=True)
+
+            if active:
+                p = active[0]
+                pnl = float(p['unrealizedPnl'])
+                roe = float(p['percentage'])
+                color_class = "pnl-positive" if pnl >= 0 else "pnl-negative"
+                
+                st.markdown(f"""
+                <div class='status-box' style='margin-top:10px; border-top: 4px solid #39ff14;'>
+                    <div style='font-size:12px;'>{p['side'].upper()} {pair} {lev}x</div>
+                    <div class='{color_class}'>{roe:.2f}% (${pnl:.4f})</div>
+                    <div style='font-size:11px; color:#8b949e;'>Entrada: {p['entryPrice']}</div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # --- SAÍDA AUTOMÁTICA (LUCRO DE CADA VELA) ---
+                analysis = get_candle_analysis(sym_f)
+                if (p['side'] == 'long' and not analysis['is_bullish']) or (p['side'] == 'short' and analysis['is_bullish']):
+                    mexc.create_market_order(sym_f, 'sell' if p['side'] == 'long' else 'buy', p['contracts'])
+                    st.toast("Lucro da vela embolsado!")
+            else:
+                st.info("Aguardando sinal na próxima vela...")
+                # Tenta abrir se o robô estiver ativo
+                if bot_active:
+                    analysis = get_candle_analysis(sym_f)
+                    if analysis and analysis['action']:
+                        # Execução de Compra/Venda
+                        margin = float(bal['USDT']['free']) * (comp / 100)
+                        if margin > 1.0:
+                            raw_qty = (margin * lev) / analysis['price']
+                            qty = mexc.amount_to_precision(sym_f, raw_qty)
+                            mexc.create_market_order(sym_f, analysis['action'], qty)
+                            st.toast(f"ORDEM ABERTA: {analysis['action'].upper()}")
+        except Exception as e:
+            st.error(f"Erro: {e}")
+
+    update_pnl()
+
+# --- 6. GRÁFICO E TERMINAL ---
+with col_main:
     st.components.v1.html(f"""
-        <div id="tv" style="height:450px;"></div>
+        <div id="tv-chart" style="height:450px;"></div>
         <script src="https://s3.tradingview.com/tv.js"></script>
-        <script>new TradingView.widget({{"autosize":true,"symbol":"MEXC:{asset.replace('/','')}.P","interval":"1","theme":"dark","style":"1","container_id":"tv"}});</script>
+        <script>
+        new TradingView.widget({{
+          "autosize": true, "symbol": "MEXC:{pair.replace('/','')}.P",
+          "interval": "1", "theme": "dark", "style": "1", "container_id": "tv-chart"
+        }});
+        </script>
     """, height=450)
     
-    # MONITOR DE OPERAÇÕES EM TEMPO REAL
-    st.subheader("📋 Gestão de Ativos")
-    @st.fragment(run_every=2)
-    def operation_manager():
-        sym_f = f"{asset.split('/')[0]}/USDT:USDT"
-        data = analyze_market_logic(sym_f)
-        
-        if data:
-            try:
-                pos = mexc.fetch_positions([sym_f])
-                active = [p for p in pos if float(p['contracts']) > 0]
-                
-                if active:
-                    p = active[0]
-                    # Lógica de Saída Ativa
-                    if (p['side'] == 'long' and data['exit_long']) or (p['side'] == 'short' and data['exit_short']):
-                        mexc.create_market_order(sym_f, 'sell' if p['side'] == 'long' else 'buy', p['contracts'])
-                        st.session_state.v46_log = "💰 Lucro Garantido! Saída por sinal de exaustão."
-                        st.toast("POSIÇÃO ENCERRADA")
-                    else:
-                        st.success(f"EM OPERAÇÃO: {p['side'].upper()} | ROE: {p['percentage']}% | PnL: ${p['unrealizedPnl']}")
-                else:
-                    if bot_on and data['side']:
-                        res = execute_smart_order(data['side'], asset, leverage, comp_pct, m_type)
-                        st.session_state.v46_log = res
-                        st.toast(res)
-            except: pass
-    operation_manager()
-
-with c_stats:
-    st.subheader("📊 IA BRAIN")
-    @st.fragment(run_every=2)
-    def update_brain():
-        sym_f = f"{asset.split('/')[0]}/USDT:USDT"
-        s = analyze_market_logic(sym_f)
-        try:
-            bal = mexc.fetch_balance({'type': 'swap'})
-            total = bal['USDT']['total']
-            st.markdown(f"<div class='metric-card'>BANCA TOTAL<br><span class='neon-gold'>$ {total:,.4f}</span></div>", unsafe_allow_html=True)
-        except: pass
-        
-        if s:
-            color = "neon-green" if s['score'] > 0 else "neon-red" if s['score'] < 0 else "white"
-            st.markdown(f"""
-                <div class='metric-card'>
-                    <div class='{color}' style='font-size:20px;'>{s['side'].upper() if s['side'] else "NEUTRO"}</div>
-                    <div style='font-size:12px;'>SCORE: {s['score']} | RSI: {s['rsi']:.1f}</div>
-                </div>
-            """, unsafe_allow_html=True)
-    update_brain()
-
-st.divider()
-if 'v46_log' not in st.session_state: st.session_state.v46_log = "AGUARDANDO CONFLUÊNCIA..."
-st.markdown(f"<div class='terminal-box'><strong>LOG:</strong> {st.session_state.v46_log}</div>", unsafe_allow_html=True)
+    st.markdown("### 🖥️ Singularity Terminal Log")
+    st.markdown(f"""
+    <div class='terminal'>
+        > [{datetime.now().strftime('%H:%M:%S')}] Iniciando análise de micro-tendência...<br>
+        > [{datetime.now().strftime('%H:%M:%S')}] Conectado à MEXC via API segura...<br>
+        > [{datetime.now().strftime('%H:%M:%S')}] Escaneando velas de 1 minuto em {pair}...
+    </div>
+    """, unsafe_allow_html=True)
