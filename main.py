@@ -4,191 +4,202 @@ import pandas as pd
 import numpy as np
 import time
 
-# --- 1. CONFIGURAÇÃO DE INTERFACE ---
-st.set_page_config(page_title="V45.1 // OMNI-QUANT", layout="wide", initial_sidebar_state="collapsed")
+# --- 1. CONFIGURAÇÃO DE INTERFACE DE ALTA PERFORMANCE ---
+st.set_page_config(page_title="V46 // SINGULARITY", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
     <style>
     .stApp { background-color: #010409; color: #e6edf3; }
     header {visibility: hidden;}
     .metric-card {
-        background: #0d1117; border: 1px solid #30363d; border-radius: 10px;
-        padding: 15px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        background: #0d1117; border: 1px solid #30363d; border-radius: 12px;
+        padding: 15px; text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,0.6);
     }
-    .neon-gold { color: #f0b90b; font-weight: bold; text-shadow: 0 0 10px #f0b90b55; }
+    .neon-gold { color: #f0b90b; font-weight: bold; text-shadow: 0 0 12px #f0b90b77; }
     .neon-green { color: #39ff14; font-weight: bold; }
     .neon-red { color: #ff3131; font-weight: bold; }
     .terminal-box {
-        background: #000; color: #00ff41; padding: 12px;
-        border-radius: 5px; font-family: 'Courier New', monospace; font-size: 0.8rem;
-        border-left: 4px solid #f0b90b;
+        background: #000; color: #00ff41; padding: 15px;
+        border-radius: 8px; font-family: 'Courier New', monospace; font-size: 0.85rem;
+        border-left: 5px solid #f0b90b;
     }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. CONEXÃO COM ENGINE MEXC ---
+# --- 2. ENGINE DE CONEXÃO ROBUSTA ---
 @st.cache_resource
-def init_exchange():
+def get_exchange_connection():
     try:
-        return ccxt.mexc({
+        exchange = ccxt.mexc({
             'apiKey': st.secrets["API_KEY"],
             'secret': st.secrets["SECRET_KEY"],
-            'options': {'defaultType': 'swap', 'adjustForTimeDifference': True},
+            'options': {
+                'defaultType': 'swap',
+                'adjustForTimeDifference': True,
+                'recvWindow': 10000 
+            },
             'enableRateLimit': True
         })
+        return exchange
     except Exception as e:
-        st.error(f"Erro ao conectar API: {e}")
+        st.error(f"Erro Crítico de Conexão: {e}")
         return None
 
-mexc = init_exchange()
+mexc = get_exchange_connection()
 
-# --- 3. MOTOR DE ANÁLISE OMNI ---
-def get_omni_signals(symbol):
+# --- 3. MOTOR DE INTELIGÊNCIA TÉCNICA (LÓGICA PURA) ---
+def analyze_market_logic(symbol):
     try:
-        # Busca OHLCV
-        ohlcv = mexc.fetch_ohlcv(symbol, timeframe='1m', limit=50)
+        # Puxa dados de 1m (Execução) e 5m (Tendência)
+        ohlcv = mexc.fetch_ohlcv(symbol, timeframe='1m', limit=60)
         df = pd.DataFrame(ohlcv, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
         
-        # VWAP
-        df['tp'] = (df['h'] + df['l'] + df['c']) / 3
-        df['vwap'] = (df['tp'] * df['v']).cumsum() / df['v'].cumsum()
-        dist_vwap = ((df['c'].iloc[-1] / df['vwap'].iloc[-1]) - 1) * 100
+        # --- INDICADORES ---
+        # 1. EMA 3/8 (Gatilho Rápido)
+        df['ema3'] = df['c'].ewm(span=3, adjust=False).mean()
+        df['ema8'] = df['c'].ewm(span=8, adjust=False).mean()
         
-        # EMAs 3 e 8
-        df['ema3'] = df['c'].ewm(span=3).mean()
-        df['ema8'] = df['c'].ewm(span=8).mean()
+        # 2. VWAP (Preço Médio por Volume)
+        df['vwap'] = (df['c'] * df['v']).cumsum() / df['v'].cumsum()
         
-        # RSI 7
+        # 3. RSI 7 (Momentum)
         delta = df['c'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(7).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(7).mean()
-        rs = gain / (loss + 1e-9) # Evita divisão por zero
-        rsi7 = 100 - (100 / (1 + rs)).iloc[-1]
+        rsi = 100 - (100 / (1 + (gain / (loss + 1e-10))))
         
-        # Order Book Imbalance
-        ob = mexc.fetch_order_book(symbol, limit=10)
-        bid_vol = sum([b[1] for b in ob['bids']])
-        ask_vol = sum([a[1] for a in ob['asks']])
-        imbalance = (bid_vol / (bid_vol + ask_vol)) - 0.5
-        
+        # 4. Filtro de Volume (Volume > Média de 20 períodos)
+        vol_mean = df['v'].rolling(20).mean()
+        vol_confirmed = df['v'].iloc[-1] > vol_mean.iloc[-1]
+
+        last = df.iloc[-1]
         score = 0
-        if df['ema3'].iloc[-1] > df['ema8'].iloc[-1]: score += 1
-        if imbalance > 0.1: score += 1
-        if rsi7 < 35: score += 1
-        if dist_vwap < -0.2: score += 1
-
-        if df['ema3'].iloc[-1] < df['ema8'].iloc[-1]: score -= 1
-        if imbalance < -0.1: score -= 1
-        if rsi7 > 65: score -= 1
-        if dist_vwap > 0.2: score -= 1
-
-        action = 'buy' if score >= 3 else 'sell' if score <= -3 else None
         
+        # --- LÓGICA DE ENTRADA ---
+        if last['ema3'] > last['ema8'] and last['c'] > last['vwap']:
+            score += 2
+        if rsi.iloc[-1] < 40: score += 1
+        if vol_confirmed: score += 1
+
+        if last['ema3'] < last['ema8'] and last['c'] < last['vwap']:
+            score -= 2
+        if rsi.iloc[-1] > 60: score -= 1
+        if vol_confirmed: score -= 1
+
+        # --- LÓGICA DE SAÍDA (Onde o lucro é feito) ---
+        # Sai se o sinal inverter ou RSI atingir extremos
+        exit_long = rsi.iloc[-1] > 80 or last['c'] < last['ema8']
+        exit_short = rsi.iloc[-1] < 20 or last['c'] > last['ema8']
+
         return {
-            "action": action, "price": df['c'].iloc[-1], "score": score,
-            "rsi": rsi7, "vwap_dist": dist_vwap, "imbalance": imbalance,
-            "exit_long": (rsi7 > 80 or df['c'].iloc[-1] < df['ema3'].iloc[-1]),
-            "exit_short": (rsi7 < 20 or df['c'].iloc[-1] > df['ema3'].iloc[-1])
+            "side": "buy" if score >= 3 else "sell" if score <= -3 else None,
+            "price": last['c'],
+            "score": score,
+            "rsi": rsi.iloc[-1],
+            "exit_long": exit_long,
+            "exit_short": exit_short
         }
     except:
         return None
 
-# --- 4. FUNÇÕES DE EXECUÇÃO ---
-def execute_trade(side, pair, lev, compound_pct, m_type):
+# --- 4. EXECUÇÃO PROFISSIONAL ---
+def execute_smart_order(side, pair, lev, compound_pct, m_type):
     try:
         symbol = f"{pair.split('/')[0]}/USDT:USDT"
         m_code = 1 if m_type == "Isolada" else 2
+        
+        mexc.load_markets()
         mexc.set_leverage(int(lev), symbol, {'openType': m_code})
 
         bal = mexc.fetch_balance({'type': 'swap'})
-        amount_usd = float(bal['USDT']['free']) * (compound_pct / 100)
+        free_balance = float(bal['USDT']['free'])
+        margin = free_balance * (compound_pct / 100)
         
-        if amount_usd < 5.0: return "❌ Mínimo não atingido ($5)"
+        if margin < 5.0: return "❌ Saldo Insuficiente (Mín. $5)"
 
         ticker = mexc.fetch_ticker(symbol)
-        raw_qty = (amount_usd * lev) / ticker['last']
+        raw_qty = (margin * lev) / ticker['last']
+        
+        # Ajusta precisão para a MEXC não recusar
         qty = mexc.amount_to_precision(symbol, raw_qty)
 
-        mexc.create_market_order(symbol, side, qty)
-        return f"🔥 {side.upper()} ABERTO | Qtd: {qty}"
+        order = mexc.create_market_order(symbol, side, qty)
+        return f"🚀 {side.upper()} EXECUTADO | QTY: {qty}"
     except Exception as e:
-        return f"❌ ERRO: {str(e)}"
+        return f"❌ ERRO API: {str(e)}"
 
-def close_position(symbol):
-    try:
-        pos = mexc.fetch_positions([symbol])
-        for p in pos:
-            if float(p['contracts']) > 0:
-                side = 'sell' if p['side'] == 'long' else 'buy'
-                mexc.create_market_order(symbol, side, p['contracts'])
-                return "💰 LUCRO REALIZADO"
-        return None
-    except: return None
-
-# --- 5. INTERFACE ---
+# --- 5. INTERFACE DASHBOARD ---
 with st.sidebar:
-    st.header("⚡ OMNI CONTROL")
-    asset = st.selectbox("ATIVO", ["BTC/USDT", "ETH/USDT", "SOL/USDT"])
-    leverage = st.slider("ALAVANCAGEM", 1, 125, 50)
-    compound = st.slider("COMPOUND %", 10, 100, 90)
-    m_type = st.radio("MARGEM", ["Isolada", "Cruzada"])
+    st.header("⚡ SINGULARITY CORE")
+    asset = st.selectbox("ATIVO", ["BTC/USDT", "ETH/USDT", "SOL/USDT", "PEPE/USDT"])
+    leverage = st.slider("ALAVANCAGEM", 1, 100, 20)
+    comp_pct = st.slider("COMPOUND %", 10, 100, 90)
+    m_type = st.radio("MODO MARGEM", ["Isolada", "Cruzada"])
     st.divider()
-    bot_active = st.toggle("ATIVAR IA OMNI-QUANT")
+    bot_on = st.toggle("ATIVAR AUTO-QUANT")
 
-st.title("V45.1 // OMNI-QUANT (FIXED)")
+st.title("V46 // THE SINGULARITY ENGINE")
 
-col_main, col_data = st.columns([3, 1])
+c_chart, c_stats = st.columns([3, 1])
 
-with col_main:
+with c_chart:
     st.components.v1.html(f"""
-        <div id="tv" style="height:400px;"></div>
+        <div id="tv" style="height:450px;"></div>
         <script src="https://s3.tradingview.com/tv.js"></script>
         <script>new TradingView.widget({{"autosize":true,"symbol":"MEXC:{asset.replace('/','')}.P","interval":"1","theme":"dark","style":"1","container_id":"tv"}});</script>
-    """, height=400)
+    """, height=450)
     
-    st.subheader("📋 Gestão de Posições")
+    # MONITOR DE OPERAÇÕES EM TEMPO REAL
+    st.subheader("📋 Gestão de Ativos")
     @st.fragment(run_every=2)
-    def manage_orders():
+    def operation_manager():
         sym_f = f"{asset.split('/')[0]}/USDT:USDT"
-        signals = get_omni_signals(sym_f)
-        if signals:
+        data = analyze_market_logic(sym_f)
+        
+        if data:
             try:
                 pos = mexc.fetch_positions([sym_f])
                 active = [p for p in pos if float(p['contracts']) > 0]
+                
                 if active:
                     p = active[0]
-                    st.success(f"{p['side'].upper()} | ROE: {p['percentage']}% | PnL: ${p['unrealizedPnl']}")
-                    if (p['side'] == 'long' and signals['exit_long']) or (p['side'] == 'short' and signals['exit_short']):
-                        res = close_position(sym_f)
-                        st.session_state.log_final = res
-                        st.toast(res)
+                    # Lógica de Saída Ativa
+                    if (p['side'] == 'long' and data['exit_long']) or (p['side'] == 'short' and data['exit_short']):
+                        mexc.create_market_order(sym_f, 'sell' if p['side'] == 'long' else 'buy', p['contracts'])
+                        st.session_state.v46_log = "💰 Lucro Garantido! Saída por sinal de exaustão."
+                        st.toast("POSIÇÃO ENCERRADA")
+                    else:
+                        st.success(f"EM OPERAÇÃO: {p['side'].upper()} | ROE: {p['percentage']}% | PnL: ${p['unrealizedPnl']}")
                 else:
-                    if bot_active and signals['action']:
-                        res = execute_trade(signals['action'], asset, leverage, compound, m_type)
-                        st.session_state.log_final = res
+                    if bot_on and data['side']:
+                        res = execute_smart_order(data['side'], asset, leverage, comp_pct, m_type)
+                        st.session_state.v46_log = res
                         st.toast(res)
             except: pass
-    manage_orders()
+    operation_manager()
 
-with col_data:
-    st.subheader("📊 STATUS")
+with c_stats:
+    st.subheader("📊 IA BRAIN")
     @st.fragment(run_every=2)
-    def update_stats():
+    def update_brain():
         sym_f = f"{asset.split('/')[0]}/USDT:USDT"
-        s = get_omni_signals(sym_f)
+        s = analyze_market_logic(sym_f)
         try:
             bal = mexc.fetch_balance({'type': 'swap'})
             total = bal['USDT']['total']
-            st.markdown(f"<div class='metric-card'>BANCA: <span class='neon-gold'>$ {total:,.4f}</span></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='metric-card'>BANCA TOTAL<br><span class='neon-gold'>$ {total:,.4f}</span></div>", unsafe_allow_html=True)
         except: pass
+        
         if s:
+            color = "neon-green" if s['score'] > 0 else "neon-red" if s['score'] < 0 else "white"
             st.markdown(f"""
                 <div class='metric-card'>
-                    <div class='{"neon-green" if s["score"] > 0 else "neon-red" if s["score"] < 0 else "white"}'>{s["action"].upper() if s["action"] else "NEUTRAL"}</div>
-                    <div style='font-size:12px;'>SCORE: {s["score"]} | RSI: {s["rsi"]:.1f}</div>
+                    <div class='{color}' style='font-size:20px;'>{s['side'].upper() if s['side'] else "NEUTRO"}</div>
+                    <div style='font-size:12px;'>SCORE: {s['score']} | RSI: {s['rsi']:.1f}</div>
                 </div>
             """, unsafe_allow_html=True)
-    update_stats()
+    update_brain()
 
-if 'log_final' not in st.session_state: st.session_state.log_final = "ONLINE"
-st.markdown(f"<div class='terminal-box'>LOG: {st.session_state.log_final}</div>", unsafe_allow_html=True)
+st.divider()
+if 'v46_log' not in st.session_state: st.session_state.v46_log = "AGUARDANDO CONFLUÊNCIA..."
+st.markdown(f"<div class='terminal-box'><strong>LOG:</strong> {st.session_state.v46_log}</div>", unsafe_allow_html=True)
