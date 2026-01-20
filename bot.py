@@ -67,7 +67,9 @@ class JordanEliteBot:
         """Cálculo de Lote Dinâmico - Gestão de Risco"""
         try:
             balance = self.exchange.fetch_balance()
-            available = float(balance['info']['data']['available'])
+            # Ajuste para buscar o saldo na estrutura correta da MEXC v3
+            available = float(balance['USDT']['free']) if 'USDT' in balance else 0
+            
             risk_amount = available * self.risk_per_trade
             price_variation = abs(price - stop_loss)
             if price_variation == 0: return 0
@@ -124,27 +126,25 @@ class JordanEliteBot:
                 self.notify(f"❌ Falha na execução: {e}")
 
     def run(self):
-        """Início do Loop de Monitoramento com correção para Erro 600"""
+        """Início do Loop com correção explícita para o Erro 600"""
         self.notify("⚡ **Jordan Elite Bot Ativado**")
         self.apply_governance()
         while True:
             try:
-                # CORREÇÃO: Passando o symbol explicitamente para evitar 'Params can't be null'
-                # Na MEXC, fetch_positions requer o filtro de símbolo para retornar dados limpos
-                pos = self.exchange.fetch_positions([self.symbol])
+                # CORREÇÃO CHAVE: Passando o symbol como parâmetro obrigatório e único
+                pos = self.exchange.fetch_positions(symbols=[self.symbol])
                 
-                # Verificação robusta de posição aberta
                 has_pos = False
-                if pos and len(pos) > 0:
-                    # Filtra apenas posições que possuem contratos maiores que zero
+                if pos:
+                    # Filtramos apenas posições com contratos ativos (> 0)
                     active_pos = [p for p in pos if float(p.get('contracts', 0)) > 0]
-                    if len(active_pos) > 0:
+                    if active_pos:
                         has_pos = True
 
                 if not has_pos:
                     self.execute_logic()
                 else:
-                    print(f"[{time.strftime('%H:%M:%S')}] Posição ativa detectada. Aguardando saída...")
+                    print(f"[{time.strftime('%H:%M:%S')}] Posição ativa detectada. Monitorando...")
                 
                 time.sleep(60) 
             except Exception as e:
