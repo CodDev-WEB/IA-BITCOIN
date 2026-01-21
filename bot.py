@@ -71,24 +71,35 @@ class JordanEliteBot:
             current_balance = self.get_balance()
             self.last_balance = current_balance
             
-            # 50% da banca com 10x alavancagem
+            # Cálculo do lote baseado em 50% da banca com 10x de alavancagem
             lot = (current_balance * 0.50 * self.leverage) / price
             
-            # CONFIGURAÇÃO DE ALVOS (Preço)
+            # Configuração de Alvos de Preço (TP de 15% e SL de 5%)
             if side == 'buy':
-                tp = price * 1.015  # Lucro de 15% (1.5% no movimento)
-                sl = price * 0.950  # Perda Máxima de 5% no movimento (Stop Loss)
+                tp = price * 1.015
+                sl = price * 0.950
             else:
-                tp = price * 0.985  # Lucro de 15% (1.5% no movimento)
-                sl = price * 1.050  # Perda Máxima de 5% no movimento (Stop Loss)
+                tp = price * 0.985
+                sl = price * 1.050
 
             if lot > 0:
+                # SOLUÇÃO PARA O ERRO DE SYMBOL:
+                # Usamos apenas o 'mexc_symbol' (BTC_USDT) que é o padrão da API nativa da corretora.
                 self.exchange.create_order(
-                    symbol=self.symbol, type='market', side=side, amount=lot,
-                    params={'symbol': self.mexc_symbol, 'takeProfitPrice': tp, 'stopLossPrice': sl}
+                    symbol=self.mexc_symbol, 
+                    type='market', 
+                    side=side, 
+                    amount=lot,
+                    params={
+                        'takeProfitPrice': tp, 
+                        'stopLossPrice': sl
+                    }
                 )
-                self.notify(f"🚀 ENTRADA: {side.upper()}\n📈 Preço: {price}\n🎯 Alvo (TP): {tp:.2f}\n🛡️ Seguro (SL): {sl:.2f}")
+                
+                self.notify(f"🚀 ENTRADA REALIZADA: {side.upper()}\n📈 Preço: {price}\n🎯 Alvo: {tp:.2f}\n🛡️ Stop: {sl:.2f}")
+        
         except Exception as e:
+            # Captura o erro exato caso a corretora recuse algo
             self.notify(f"❌ Falha ao executar trade: {e}")
 
     def monitor_exit(self):
