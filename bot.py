@@ -1,94 +1,108 @@
-import streamlit as st
 import ccxt
 import pandas as pd
+import pandas_ta as ta
+import time
 import requests
-from datetime import datetime
+import os
+import sys
 
-# --- 1. SETUP DE INTERFACE ---
-st.set_page_config(page_title="V56 // SIGNAL MODE", layout="wide")
+# Garante que o log no Railway seja atualizado em tempo real
+sys.stdout.reconfigure(line_buffering=True)
 
-st.markdown("""
-    <style>
-    .stApp { background-color: #0b0e11; color: #e6edf3; }
-    .signal-card { 
-        background: #161a1e; border-left: 5px solid #f0b90b; 
-        padding: 20px; border-radius: 5px; margin-bottom: 10px;
-    }
-    </style>
-""", unsafe_allow_html=True)
+class JordanSignalBot:
+    def __init__(self, telegram_token, chat_id):
+        print(">>> Iniciando Monitor de Sinais (Modo Visualização)...")
+        # Usamos CCXT apenas para leitura de dados (não precisa de API Key para isso)
+        self.exchange = ccxt.mexc()
+        self.symbol = 'BTC/USDT:USDT'
+        self.telegram_token = telegram_token
+        self.chat_id = chat_id
 
-# --- 2. MOTOR DE CONEXÃO (APENAS LEITURA) ---
-@st.cache_resource
-def init_exchange():
-    return ccxt.mexc({'options': {'defaultType': 'swap'}})
-
-mexc = init_exchange()
-
-# --- 3. FUNÇÃO DE ENVIO TELEGRAM ---
-def send_telegram_signal(message):
-    token = st.secrets["TELEGRAM_TOKEN"]
-    chat_id = st.secrets["TELEGRAM_CHAT_ID"]
-    url = f"https://api.telegram.org/bot{token}/sendMessage?chat_id={chat_id}&text={message}&parse_mode=Markdown"
-    try:
-        requests.get(url)
-    except Exception as e:
-        st.error(f"Erro Telegram: {e}")
-
-# --- 4. INTELIGÊNCIA DE MERCADO ---
-def get_analysis(symbol):
-    try:
-        ohlcv = mexc.fetch_ohlcv(symbol, timeframe='1m', limit=50)
-        df = pd.DataFrame(ohlcv, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
-        df['ema3'] = df['c'].ewm(span=3).mean()
-        df['ema8'] = df['c'].ewm(span=8).mean()
+    def send_signal(self, side, price, rsi, bbu, bbl):
+        """Formata e envia o sinal de trade para o Telegram"""
         
-        last = df.iloc[-1]
-        prev = df.iloc[-2]
+        # Cálculo de alvos (Exemplo: 1% de Stop e 2% de Lucro)
+        stop_loss = price * 0.99 if side == 'COMPRA 🟢' else price * 1.01
+        take_profit = price * 1.02 if side == 'COMPRA 🟢' else price * 0.98
         
-        # Lógica de Sinal
-        if last['ema3'] > last['ema8'] and last['c'] > prev['c']:
-            return "🚀 SINAL DE COMPRA (LONG)"
-        elif last['ema3'] < last['ema8'] and last['c'] < prev['c']:
-            return "🔻 SINAL DE VENDA (SHORT)"
-        return None
-    except: return None
+        emoji = "🚀" if side == 'COMPRA 🟢' else "🔻"
+        
+        message = (
+            f"{emoji} **SINAL DE ELITE DETECTADO** {emoji}\n\n"
+            f"**Ativo:** BTC/USDT (Futuros)\n"
+            f"**Ação:** {side}\n"
+            f"**Preço de Entrada:** ${price:,.2f}\n\n"
+            f"🚫 **Stop Loss:** ${stop_loss:,.2f}\n"
+            f"🎯 **Take Profit:** ${take_profit:,.2f}\n\n"
+            f"📊 **Indicadores:**\n"
+            f"- RSI: {rsi:.2f}\n"
+            f"- Banda Superior: ${bbu:,.2f}\n"
+            f"- Banda Inferior: ${bbl:,.2f}\n\n"
+            f"⚠️ *Este é um sinal automático. Valide antes de entrar.*"
+        )
+        
+        print(f">>> Enviando Sinal: {side} @ {price}")
+        url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"
+        try:
+            requests.post(url, json={"chat_id": self.chat_id, "text": message, "parse_mode": "Markdown"}, timeout=5)
+        except Exception as e:
+            print(f"Erro ao enviar para Telegram: {e}")
 
-# --- 5. DASHBOARD E MONITOR ---
-st.title("📡 QUANT-OS V56 // MODO SINALIZADOR")
+    def get_market_data(self):
+        """Busca e processa indicadores técnicos"""
+        try:
+            ohlcv = self.exchange.fetch_ohlcv(self.symbol, '15m', limit=100)
+            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            
+            # Bandas de Bollinger e RSI
+            df.ta.bbands(length=20, std=2, append=True)
+            df.ta.rsi(length=14, append=True)
+            
+            # Limpeza dos nomes das colunas geradas pelo pandas_ta
+            df.columns = [c.split('_')[0] if any(x in c for x in ['BBU', 'BBL', 'RSI']) else c for c in df.columns]
+            return df
+        except Exception as e:
+            print(f"Erro ao buscar dados: {e}")
+            return None
 
-with st.sidebar:
-    asset = st.selectbox("ATIVO PARA MONITORAR", ["BTC/USDT:USDT", "SOL/USDT:USDT", "ETH/USDT:USDT"])
-    intervalo = st.empty()
-    monitoring = st.toggle("ATIVAR MONITORAMENTO DE SINAIS")
+    def run_monitor(self):
+        print(">>> Bot Jordan Elite em modo MONITORAMENTO ativo.")
+        ultimo_sinal_time = 0 # Evita spam de sinais repetidos no mesmo candle
 
-if monitoring:
-    st.info(f"Monitorando {asset}... Os sinais serão enviados para o Telegram.")
+        while True:
+            try:
+                df = self.get_market_data()
+                if df is not None:
+                    last = df.iloc[-1]
+                    price = self.exchange.fetch_ticker(self.symbol)['last']
+                    
+                    # LOGICA DE SINAL
+                    # Sinal de Compra: Preço cruza a Banda Superior e RSI não está exausto
+                    if (price > last['BBU']) and (last['RSI'] < 70):
+                        if time.time() - ultimo_sinal_time > 900: # 15 min de intervalo
+                            self.send_signal('COMPRA 🟢', price, last['RSI'], last['BBU'], last['BBL'])
+                            ultimo_sinal_time = time.time()
+
+                    # Sinal de Venda: Preço cruza a Banda Inferior e RSI não está exausto
+                    elif (price < last['BBL']) and (last['RSI'] > 30):
+                        if time.time() - ultimo_sinal_time > 900:
+                            self.send_signal('VENDA 🔴', price, last['RSI'], last['BBU'], last['BBL'])
+                            ultimo_sinal_time = time.time()
+
+                print(f"[{time.strftime('%H:%M:%S')}] BTC: ${price:,.2f} | RSI: {last['RSI']:.2f} | Aguardando...", end='\r')
+                time.sleep(30)
+            except Exception as e:
+                print(f"\nErro no loop: {e}")
+                time.sleep(10)
+
+if __name__ == "__main__":
+    # Para o Railway, você só precisa dessas duas variáveis agora
+    TOKEN = os.getenv("TELEGRAM_TOKEN")
+    CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
     
-    # Fragmento para loop de monitoramento
-    @st.fragment(run_every=60) # Checa a cada fechamento de vela (1 min)
-    def monitor_engine():
-        sinal = get_analysis(asset)
-        agora = datetime.now().strftime('%H:%M:%S')
+    if not TOKEN or not CHAT_ID:
+        print("❌ ERRO: Variáveis do Telegram não encontradas!")
+        sys.exit(1)
         
-        if sinal:
-            msg = f"*🔔 NOVO SINAL DETECTADO*\n\n*Ativo:* {asset}\n*Ação:* {sinal}\n*Horário:* {agora}\n\n_Execute manualmente na MEXC se desejar._"
-            send_telegram_signal(msg)
-            st.markdown(f"<div class='signal-card'><b>{agora}</b> - {sinal} enviado para o Telegram.</div>", unsafe_allow_html=True)
-        else:
-            st.write(f"[{agora}] Sem sinais claros no momento. Aguardando fechamento de vela...")
-
-    monitor_engine()
-else:
-    st.warning("Monitoramento em Stand-by. Ligue o botão lateral para iniciar.")
-
-# Gráfico para referência visual
-st.components.v1.html(f"""
-    <div id="tv-chart" style="height:400px;"></div>
-    <script src="https://s3.tradingview.com/tv.js"></script>
-    <script>
-    new TradingView.widget({{
-      "autosize": true, "symbol": "MEXC:{asset.replace('/','').replace(':USDT','')}.P",
-      "interval": "1", "theme": "dark", "container_id": "tv-chart"
-    }});
-    </script>
-""", height=400)
+    bot = JordanSignalBot(TOKEN, CHAT_ID)
+    bot.run_monitor()
