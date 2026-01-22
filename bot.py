@@ -1,141 +1,94 @@
+import streamlit as st
 import ccxt
 import pandas as pd
-import pandas_ta as ta
-import time
 import requests
-import os
-import sys
+from datetime import datetime
 
-sys.stdout.reconfigure(line_buffering=True)
+# --- 1. SETUP DE INTERFACE ---
+st.set_page_config(page_title="V56 // SIGNAL MODE", layout="wide")
 
-class JordanEliteBot:
-    def __init__(self, api_key, secret, telegram_token, chat_id):
-        print(">>> 🚀 INICIANDO MASTER JORDAN ELITE V5 (MEXC NATIVE)...")
-        self.exchange = ccxt.mexc({
-            'apiKey': api_key,
-            'secret': secret,
-            'enableRateLimit': True,
-            'options': {'defaultType': 'swap'} # Define mercado de Futuros
-        })
-        # O segredo está aqui: usamos o formato que a MEXC exige
-        self.mexc_symbol = 'BTC_USDT' 
-        self.telegram_token, self.chat_id = telegram_token, chat_id
-        self.leverage = 10 
+st.markdown("""
+    <style>
+    .stApp { background-color: #0b0e11; color: #e6edf3; }
+    .signal-card { 
+        background: #161a1e; border-left: 5px solid #f0b90b; 
+        padding: 20px; border-radius: 5px; margin-bottom: 10px;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# --- 2. MOTOR DE CONEXÃO (APENAS LEITURA) ---
+@st.cache_resource
+def init_exchange():
+    return ccxt.mexc({'options': {'defaultType': 'swap'}})
+
+mexc = init_exchange()
+
+# --- 3. FUNÇÃO DE ENVIO TELEGRAM ---
+def send_telegram_signal(message):
+    token = st.secrets["TELEGRAM_TOKEN"]
+    chat_id = st.secrets["TELEGRAM_CHAT_ID"]
+    url = f"https://api.telegram.org/bot{token}/sendMessage?chat_id={chat_id}&text={message}&parse_mode=Markdown"
+    try:
+        requests.get(url)
+    except Exception as e:
+        st.error(f"Erro Telegram: {e}")
+
+# --- 4. INTELIGÊNCIA DE MERCADO ---
+def get_analysis(symbol):
+    try:
+        ohlcv = mexc.fetch_ohlcv(symbol, timeframe='1m', limit=50)
+        df = pd.DataFrame(ohlcv, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
+        df['ema3'] = df['c'].ewm(span=3).mean()
+        df['ema8'] = df['c'].ewm(span=8).mean()
         
-        self.last_balance = 0
-        self.daily_profit = 0
-        self.trades_today = 0
+        last = df.iloc[-1]
+        prev = df.iloc[-2]
+        
+        # Lógica de Sinal
+        if last['ema3'] > last['ema8'] and last['c'] > prev['c']:
+            return "🚀 SINAL DE COMPRA (LONG)"
+        elif last['ema3'] < last['ema8'] and last['c'] < prev['c']:
+            return "🔻 SINAL DE VENDA (SHORT)"
+        return None
+    except: return None
 
-    def notify(self, message):
-        url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"
-        try:
-            requests.post(url, json={"chat_id": self.chat_id, "text": f"🤖 {message}"}, timeout=10)
-        except: print("❌ Erro Telegram")
+# --- 5. DASHBOARD E MONITOR ---
+st.title("📡 QUANT-OS V56 // MODO SINALIZADOR")
 
-    def get_balance(self):
-        try:
-            balance = self.exchange.fetch_balance()
-            return float(balance.get('USDT', {}).get('free', 0)) or float(balance.get('total', {}).get('USDT', 0))
-        except: return 0
+with st.sidebar:
+    asset = st.selectbox("ATIVO PARA MONITORAR", ["BTC/USDT:USDT", "SOL/USDT:USDT", "ETH/USDT:USDT"])
+    intervalo = st.empty()
+    monitoring = st.toggle("ATIVAR MONITORAMENTO DE SINAIS")
 
-    def get_data(self):
-        try:
-            # Para leitura de dados (OHLCV), o CCXT aceita o símbolo padrão
-            ohlcv = self.exchange.fetch_ohlcv('BTC/USDT', '5m', limit=100)
-            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            
-            df.ta.bbands(length=20, std=2, append=True)
-            df.ta.rsi(length=14, append=True)
-            df.ta.ema(length=9, append=True)
-            df.ta.ema(length=21, append=True)
-            df['vol_avg'] = df['volume'].rolling(window=20).mean()
-            
-            cols = {
-                'BBU': [c for c in df.columns if 'BBU' in c][0],
-                'BBL': [c for c in df.columns if 'BBL' in c][0],
-                'RSI': [c for c in df.columns if 'RSI' in c][0],
-                'EMA9': [c for c in df.columns if 'EMA_9' in c][0],
-                'EMA21': [c for c in df.columns if 'EMA_21' in c][0]
-            }
-            return df, cols
-        except Exception as e:
-            print(f"Erro métricas: {e}")
-            return None, None
+if monitoring:
+    st.info(f"Monitorando {asset}... Os sinais serão enviados para o Telegram.")
+    
+    # Fragmento para loop de monitoramento
+    @st.fragment(run_every=60) # Checa a cada fechamento de vela (1 min)
+    def monitor_engine():
+        sinal = get_analysis(asset)
+        agora = datetime.now().strftime('%H:%M:%S')
+        
+        if sinal:
+            msg = f"*🔔 NOVO SINAL DETECTADO*\n\n*Ativo:* {asset}\n*Ação:* {sinal}\n*Horário:* {agora}\n\n_Execute manualmente na MEXC se desejar._"
+            send_telegram_signal(msg)
+            st.markdown(f"<div class='signal-card'><b>{agora}</b> - {sinal} enviado para o Telegram.</div>", unsafe_allow_html=True)
+        else:
+            st.write(f"[{agora}] Sem sinais claros no momento. Aguardando fechamento de vela...")
 
-    def execute(self, side, price):
-        try:
-            current_balance = self.get_balance()
-            self.last_balance = current_balance
-            
-            lot = (current_balance * 0.50 * self.leverage) / price
-            
-            if side == 'buy':
-                tp, sl = price * 1.015, price * 0.950
-            else:
-                tp, sl = price * 0.985, price * 1.050
+    monitor_engine()
+else:
+    st.warning("Monitoramento em Stand-by. Ligue o botão lateral para iniciar.")
 
-            if lot > 0:
-                # SOLUÇÃO DEFINITIVA: symbol=self.mexc_symbol ('BTC_USDT')
-                self.exchange.create_order(
-                    symbol=self.mexc_symbol, 
-                    type='market', 
-                    side=side, 
-                    amount=lot,
-                    params={
-                        'takeProfitPrice': tp, 
-                        'stopLossPrice': sl
-                    }
-                )
-                self.notify(f"🚀 ENTRADA: {side.upper()}\n📈 Preço: {price}\n🎯 Alvo: {tp:.2f}\n🛡️ Stop: {sl:.2f}")
-        except Exception as e:
-            self.notify(f"❌ Falha ao executar trade: {e}")
-
-    def monitor_exit(self):
-        try:
-            pos = self.exchange.fetch_positions(params={'symbol': self.mexc_symbol})
-            has_pos = any(float(p.get('contracts', 0)) > 0 for p in pos) if pos else False
-            
-            if not has_pos and self.last_balance > 0:
-                new_balance = self.get_balance()
-                profit = new_balance - self.last_balance
-                if abs(profit) > 0.01: # Evita relatórios falsos por pequenas taxas
-                    self.daily_profit += profit
-                    self.trades_today += 1
-                    status = "💰 LUCRO" if profit > 0 else "📉 STOP"
-                    self.notify(f"🏁 RESULTADO:\n{status}: ${profit:.2f}\n📊 Hoje: ${self.daily_profit:.2f}")
-                    self.last_balance = 0
-        except: pass
-
-    def run_loop(self):
-        self.notify("SISTEMA V5 ONLINE 🚀\nFoco: BTC_USDT Futuros")
-        while True:
-            try:
-                self.monitor_exit()
-                pos = self.exchange.fetch_positions(params={'symbol': self.mexc_symbol})
-                has_pos = any(float(p.get('contracts', 0)) > 0 for p in pos) if pos else False
-                
-                if not has_pos:
-                    df, c = self.get_data()
-                    if df is not None:
-                        last, prev = df.iloc[-1], df.iloc[-2]
-                        price = self.exchange.fetch_ticker('BTC/USDT')['last']
-                        
-                        buy = (last['close'] > last[c['EMA9']]) and (last[c['EMA9']] > last[c['EMA21']]) and \
-                              (prev['close'] > prev[c['BBU']]) and (50 < last[c['RSI']] < 70) and \
-                              (last['volume'] > last['vol_avg'])
-
-                        sell = (last['close'] < last[c['EMA9']]) and (last[c['EMA9']] < last[c['EMA21']]) and \
-                               (prev['close'] < prev[c['BBL']]) and (30 < last[c['RSI']] < 50) and \
-                               (last['volume'] > last['vol_avg'])
-
-                        if buy: self.execute('buy', price)
-                        elif sell: self.execute('sell', price)
-                
-                print(f"[{time.strftime('%H:%M:%S')}] Analisando BTC_USDT...")
-                time.sleep(30)
-            except Exception as e:
-                print(f"Erro: {e}"); time.sleep(20)
-
-if __name__ == "__main__":
-    k, s, t, c = os.getenv("MEXC_API_KEY"), os.getenv("MEXC_SECRET"), os.getenv("TELEGRAM_TOKEN"), os.getenv("CHAT_ID")
-    if all([k, s, t, c]): JordanEliteBot(k, s, t, c).run_loop()
+# Gráfico para referência visual
+st.components.v1.html(f"""
+    <div id="tv-chart" style="height:400px;"></div>
+    <script src="https://s3.tradingview.com/tv.js"></script>
+    <script>
+    new TradingView.widget({{
+      "autosize": true, "symbol": "MEXC:{asset.replace('/','').replace(':USDT','')}.P",
+      "interval": "1", "theme": "dark", "container_id": "tv-chart"
+    }});
+    </script>
+""", height=400)
