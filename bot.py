@@ -6,7 +6,7 @@ import requests
 import os
 import sys
 
-# Força o log imediato no Railway
+# Log em tempo real para o Railway
 sys.stdout.reconfigure(line_buffering=True)
 
 class JordanSignalBot:
@@ -15,6 +15,9 @@ class JordanSignalBot:
         self.symbol = 'BTC/USDT:USDT'
         self.token = token
         self.chat_id = chat_id
+        # --- CONFIGURAÇÃO DE ALAVANCAGEM ---
+        self.leverage = 10  # Exemplo: 10x
+        self.target_roe = 0.20 # 20% de lucro/perda na operação
 
     def send_telegram(self, msg):
         url = f"https://api.telegram.org/bot{self.token}/sendMessage"
@@ -35,31 +38,53 @@ class JordanSignalBot:
         except: return None
 
     def start(self):
-        self.send_telegram("🚀 **SINALIZADOR JORDAN ELITE ONLINE**\nMonitorando BTC/USDT...")
+        print(f">>> Monitorando BTC com Alavancagem de {self.leverage}x para ROE de 20%")
+        self.send_telegram(f"🚀 **JORDAN ELITE V5 ONLINE**\nFoco: Futuros (PNL 20%)\nAlavancagem Base: {self.leverage}x")
+        
         while True:
             try:
                 df = self.get_data()
                 if df is not None:
                     last = df.iloc[-1]
                     price = self.exchange.fetch_ticker(self.symbol)['last']
+                    
+                    # Cálculo da variação necessária no preço (Price Move)
+                    # Se ROE = 20% e Lev = 10x, move_needed = 0.02 (2%)
+                    move_needed = self.target_roe / self.leverage
+                    
+                    # --- LÓGICA LONG ---
                     if (price > last['BBU']) and (last['RSI'] < 70):
-                        self.send_telegram(f"🟢 **SINAL DE COMPRA BTC**\n💰 Preço: ${price:,.2f}")
+                        tp = price * (1 + move_needed)
+                        sl = price * (1 - move_needed)
+                        msg = (f"🟢 **SINAL LONG (FUTUROS)**\n\n"
+                               f"📥 **Entrada:** ${price:,.2f}\n"
+                               f"Leverage Sugerida: {self.leverage}x\n\n"
+                               f"🎯 **Saída Lucro (+20% PNL):** ${tp:,.2f}\n"
+                               f"🚫 **Saída Stop (-20% PNL):** ${sl:,.2f}\n\n"
+                               f"📊 RSI: {last['RSI']:.2f}")
+                        self.send_telegram(msg)
                         time.sleep(900)
+                        
+                    # --- LÓGICA SHORT ---
                     elif (price < last['BBL']) and (last['RSI'] > 30):
-                        self.send_telegram(f"🔴 **SINAL DE VENDA BTC**\n💰 Preço: ${price:,.2f}")
+                        tp = price * (1 - move_needed)
+                        sl = price * (1 + move_needed)
+                        msg = (f"🔴 **SINAL SHORT (FUTUROS)**\n\n"
+                               f"📥 **Entrada:** ${price:,.2f}\n"
+                               f"Leverage Sugerida: {self.leverage}x\n\n"
+                               f"🎯 **Saída Lucro (+20% PNL):** ${tp:,.2f}\n"
+                               f"🚫 **Saída Stop (-20% PNL):** ${sl:,.2f}\n\n"
+                               f"📊 RSI: {last['RSI']:.2f}")
+                        self.send_telegram(msg)
                         time.sleep(900)
-                print(f"[{time.strftime('%H:%M:%S')}] BTC: {price} | Aguardando...")
+                        
+                print(f"[{time.strftime('%H:%M:%S')}] BTC: {price} | ROE Alvo: 20%", end='\r')
                 time.sleep(30)
             except Exception as e:
                 time.sleep(10)
 
 if __name__ == "__main__":
-    # Nomes ajustados conforme sua imagem do Railway
     t = os.getenv("TELEGRAM_TOKEN")
     c = os.getenv("CHAT_ID")
-    
-    if not t or not c:
-        print(f"❌ ERRO: Variáveis faltando! Token: {'OK' if t else 'FALTA'}, ChatID: {'OK' if c else 'FALTA'}")
-        sys.exit(1)
-        
-    JordanSignalBot(t, c).start()
+    if t and c:
+        JordanSignalBot(t, c).start()
