@@ -2,4 +2,4 @@ ccxt
 pandas
 pandas-ta
 requests
-google-generativeai
+google-genai
