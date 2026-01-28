@@ -5,14 +5,10 @@ import time
 import requests
 import os
 import sys
-import google.generativeai as genai
+from google import genai # Nova biblioteca oficial
 
 # Sincronização de logs para o Railway
 sys.stdout.reconfigure(line_buffering=True)
-
-# Configuração da IA Gemini
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-ai_model = genai.GenerativeModel('gemini-1.5-flash')
 
 class JordanEliteAI:
     def __init__(self, token, chat_id):
@@ -21,39 +17,43 @@ class JordanEliteAI:
         self.token = token
         self.chat_id = chat_id
         self.leverage = 200 
-        self.target_roe = 0.20 # 20% de PNL
+        self.target_roe = 0.20 
+        
+        # Inicializa o cliente da nova SDK do Gemini
+        self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
     def ask_gemini(self, df, price, side):
-        """O Gemini analisa se o sinal técnico faz sentido no contexto atual"""
+        """Filtro de inteligência usando a nova SDK google-genai"""
         try:
-            # Pega os últimos 10 minutos para contexto
             recent_data = df.tail(10)[['close', 'RSI', 'BBU', 'BBL']].to_string()
             prompt = (
-                f"Analise este Scalp de 200x para BTC.\n"
-                f"Lado: {side}\nPreço: {price}\n"
-                f"Dados (1min):\n{recent_data}\n"
-                f"O RSI e a volatilidade suportam um ganho rápido de 0.1% (20% ROE)? "
-                f"Responda apenas 'APROVADO' ou 'NEGADO' seguido de uma frase curta."
+                f"Analise este Scalp de 200x para BTC.\nLado: {side}\nPreço: {price}\n"
+                f"Dados recentes de 1min:\n{recent_data}\n"
+                f"Responda apenas 'APROVADO' ou 'NEGADO' e uma justificativa curtíssima."
             )
-            response = ai_model.generate_content(prompt)
+            # Chamada otimizada para o modelo Flash
+            response = self.client.models.generate_content(
+                model="gemini-1.5-flash",
+                contents=prompt
+            )
             return response.text
-        except: return "ERRO IA: Prosseguir com cautela."
+        except Exception as e:
+            return f"ERRO IA ({e}): Prosseguir com cautela."
 
     def send_signal(self, side, price, tp, sl, ai_verdict):
         url = f"https://api.telegram.org/bot{self.token}/sendMessage"
-        msg = (f"🧠 **JORDAN ELITE AI (200x)**\n"
-               f"Sinal: {side}\n"
-               f"📥 Entrada: ${price:,.2f}\n"
-               f"🎯 Take Profit (20%): ${tp:,.2f}\n"
-               f"🚫 Stop Loss (20%): ${sl:,.2f}\n\n"
-               f"🤖 **Veredito Gemini:**\n{ai_verdict}")
+        msg = (f"🧠 **JORDAN ELITE AI v8.0 (200x)**\n\n"
+               f"📟 **SINAL:** {side}\n"
+               f"📥 **ENTRADA:** ${price:,.2f}\n\n"
+               f"🎯 **TAKE PROFIT (SAÍDA 20%):** ${tp:,.2f}\n"
+               f"🚫 **STOP LOSS (SAÍDA 20%):** ${sl:,.2f}\n\n"
+               f"🤖 **ANÁLISE GEMINI:**\n{ai_verdict}")
         requests.post(url, json={"chat_id": self.chat_id, "text": msg, "parse_mode": "Markdown"})
 
     def start(self):
-        print(">>> Jordan Elite AI Online - Modo 1min / 200x")
+        print(">>> Jordan Elite AI v8.0 Online - Nova SDK Google GenAI")
         while True:
             try:
-                # Busca dados no tempo de 1 minuto (Necessário para 200x)
                 ohlcv = self.exchange.fetch_ohlcv(self.symbol, '1m', limit=50)
                 df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
                 df.ta.bbands(append=True)
@@ -62,27 +62,31 @@ class JordanEliteAI:
                 
                 last = df.iloc[-1]
                 price = self.exchange.fetch_ticker(self.symbol)['last']
-                move = self.target_roe / self.leverage # 0.001 (0.1%)
+                price_change = self.target_roe / self.leverage 
 
-                # Gatilho Técnico
                 side = None
                 if (price > last['BBU']) and (last['RSI'] < 70): side = "LONG 🟢"
                 elif (price < last['BBL']) and (last['RSI'] > 30): side = "SHORT 🔴"
 
                 if side:
-                    # Filtro de Inteligência Artificial
                     verdict = self.ask_gemini(df, price, side)
                     if "APROVADO" in verdict:
-                        tp = price * (1 + move) if "LONG" in side else price * (1 - move)
-                        sl = price * (1 - move) if "LONG" in side else price * (1 + move)
+                        if "LONG" in side:
+                            tp = price * (1 + price_change)
+                            sl = price * (1 - price_change)
+                        else:
+                            tp = price * (1 - price_change)
+                            sl = price * (1 + price_change)
                         self.send_signal(side, price, tp, sl, verdict)
-                        time.sleep(60) # Pausa para não repetir no mesmo candle
+                        time.sleep(60)
 
-                time.sleep(10) # Checa a cada 10 segundos
+                print(f"[{time.strftime('%H:%M:%S')}] BTC: {price} | Analisando com Gemini...", end='\r')
+                time.sleep(10) 
             except Exception as e:
                 print(f"Erro: {e}")
                 time.sleep(5)
 
 if __name__ == "__main__":
-    bot = JordanEliteAI(os.getenv("TELEGRAM_TOKEN"), os.getenv("CHAT_ID"))
-    bot.start()
+    token = os.getenv("TELEGRAM_TOKEN")
+    chat_id = os.getenv("CHAT_ID")
+    JordanEliteAI(token, chat_id).start()
